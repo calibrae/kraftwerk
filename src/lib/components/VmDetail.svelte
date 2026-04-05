@@ -1,11 +1,13 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
+  import SerialConsole from "./SerialConsole.svelte";
 
   const state = getState();
 
   let domainXml = $state(null);
   let showXml = $state(false);
   let loadingXml = $state(false);
+  let showConsole = $state(false);
 
   const stateColors = {
     running: "#34d399",
@@ -44,10 +46,16 @@
     if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
     return `${mb} MB`;
   }
+
+  function closeConsole() {
+    showConsole = false;
+  }
 </script>
 
 <div class="detail">
-  {#if !state.selectedVm}
+  {#if showConsole && state.selectedVm}
+    <SerialConsole vmName={state.selectedVm.name} onClose={closeConsole} />
+  {:else if !state.selectedVm}
     <div class="empty-detail">
       {#if state.isConnected}
         <p>Select a VM from the sidebar</p>
@@ -107,6 +115,9 @@
         {#if canForceOff(vm.state)}
           <button class="btn-action danger" onclick={() => destroyDomain(vm.name)}>Force Off</button>
         {/if}
+        {#if vm.has_serial && vm.state === "running"}
+          <button class="btn-action console" onclick={() => showConsole = true}>Serial Console</button>
+        {/if}
       </div>
     </div>
 
@@ -127,9 +138,19 @@
 <style>
   .detail {
     flex: 1;
-    padding: 24px;
+    padding: 0;
     overflow-y: auto;
     height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail > :not(.empty-detail):not(:global(.console-container)) {
+    padding: 0 24px;
+  }
+
+  .detail > :first-child {
+    padding-top: 24px;
   }
 
   .empty-detail {
@@ -143,6 +164,7 @@
 
   .vm-header {
     margin-bottom: 24px;
+    padding: 24px 24px 0;
   }
 
   .vm-title-row {
@@ -180,6 +202,7 @@
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 12px;
     margin-bottom: 24px;
+    padding: 0 24px;
   }
 
   .info-card {
@@ -206,6 +229,7 @@
 
   .vm-actions {
     margin-bottom: 24px;
+    padding: 0 24px;
   }
 
   .vm-actions h3, .xml-header h3 {
@@ -239,6 +263,12 @@
   .btn-action.start:hover { background: #047857; }
   .btn-action.danger { background: #7f1d1d; color: #fca5a5; border-color: #7f1d1d; }
   .btn-action.danger:hover { background: #991b1b; }
+  .btn-action.console { background: #1e3a5f; color: #93c5fd; border-color: #1e3a5f; }
+  .btn-action.console:hover { background: #1e40af; }
+
+  .vm-xml-section {
+    padding: 0 24px 24px;
+  }
 
   .xml-header {
     display: flex;

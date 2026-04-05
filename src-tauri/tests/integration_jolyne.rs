@@ -204,3 +204,60 @@ fn test_prod_vms_all_running() {
         );
     }
 }
+
+// ─── Console tests ───
+
+#[test]
+fn test_open_console_on_hass() {
+    // example-serial has a serial console and is always running
+    let conn = connect_testhost();
+
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let received = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let received_clone = received.clone();
+
+    let session = conn.with_console("example-serial", move |data| {
+        received_clone.lock().unwrap().extend_from_slice(&data);
+    });
+
+    assert!(session.is_ok(), "Should open console on example-serial");
+    let mut session = session.unwrap();
+
+    assert!(session.is_active(), "Session should be active after open");
+
+    // Send a newline to trigger a prompt or output
+    let sent = session.send(b"\n");
+    assert!(sent.is_ok(), "Should be able to send data");
+
+    // Wait briefly for response
+    std::thread::sleep(Duration::from_secs(2));
+
+    let data = received.lock().unwrap();
+    println!("Received {} bytes from hass console", data.len());
+    if !data.is_empty() {
+        let text = String::from_utf8_lossy(&data);
+        println!("Console output: {:?}", &text[..text.len().min(200)]);
+    }
+
+    // Close
+    session.close();
+    assert!(!session.is_active(), "Session should be inactive after close");
+}
+
+#[test]
+fn test_open_console_on_nonexistent_domain_fails() {
+    let conn = connect_testhost();
+    let result = conn.with_console("this-vm-does-not-exist-12345", |_| {});
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_console_send_after_close_fails() {
+    let conn = connect_testhost();
+    let mut session = conn.with_console("example-serial", |_| {}).unwrap();
+    session.close();
+    let result = session.send(b"test");
+    assert!(result.is_err(), "Send after close should fail");
+}

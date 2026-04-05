@@ -3,17 +3,20 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::libvirt::connection::LibvirtConnection;
+use crate::libvirt::console::ConsoleSession;
 use crate::models::connection::SavedConnection;
+use crate::models::error::VirtManagerError;
 use crate::models::state::ConnectionState;
 
 /// Global application state, managed by Tauri.
 ///
-/// Holds the libvirt connection, saved connections, and per-connection state.
-/// Interior mutability via Mutex for thread-safe access from Tauri commands.
+/// Holds the libvirt connection, saved connections, per-connection state,
+/// and the active console session.
 pub struct AppState {
     libvirt: LibvirtConnection,
     saved_connections: Mutex<Vec<SavedConnection>>,
     connection_states: Mutex<HashMap<Uuid, ConnectionState>>,
+    console: Mutex<Option<ConsoleSession>>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             libvirt: LibvirtConnection::new(),
             saved_connections: Mutex::new(Vec::new()),
             connection_states: Mutex::new(HashMap::new()),
+            console: Mutex::new(None),
         }
     }
 
@@ -85,6 +89,58 @@ impl AppState {
             .cloned()
             .unwrap_or(ConnectionState::Disconnected)
     }
+
+    // -- Console session --
+
+    /// Open a console session, using the current libvirt connection.
+    pub fn open_console<F>(
+        &self,
+        domain_name: &str,
+        on_data: F,
+    ) -> Result<ConsoleSession, VirtManagerError>
+    where
+        F: Fn(Vec<u8>) + Send + 'static,
+    {
+        self.libvirt.with_console(domain_name, on_data)
+    }
+
+    pub fn set_console(&self, session: ConsoleSession) {
+        let mut guard = self.console.lock().unwrap();
+        // Close existing session if any
+        if let Some(mut old) = guard.take() {
+            old.close();
+        }
+        *guard = Some(session);
+    }
+
+    pub fn console_send(&self, data: &[u8]) -> Result<(), VirtManagerError> {
+        let guard = self.console.lock().unwrap();
+        match guard.as_ref() {
+            Some(session) => {
+                session.send(data)?;
+                Ok(())
+            }
+            None => Err(VirtManagerError::OperationFailed {
+                operation: "consoleSend".into(),
+                reason: "No active console session".into(),
+            }),
+        }
+    }
+
+    pub fn console_is_active(&self) -> bool {
+        self.console
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(false, |s| s.is_active())
+    }
+
+    pub fn close_console(&self) {
+        let mut guard = self.console.lock().unwrap();
+        if let Some(mut session) = guard.take() {
+            session.close();
+        }
+    }
 }
 
 impl Default for AppState {
@@ -144,5 +200,18 @@ mod tests {
         state.update_last_connected(&id, 1234567890);
         let found = state.find_saved_connection(&id).unwrap();
         assert_eq!(found.last_connected, Some(1234567890));
+    }
+
+    #[test]
+    fn console_not_active_by_default() {
+        let state = AppState::new();
+        assert!(!state.console_is_active());
+    }
+
+    #[test]
+    fn console_send_without_session_errors() {
+        let state = AppState::new();
+        let result = state.console_send(b"hello");
+        assert!(result.is_err());
     }
 }

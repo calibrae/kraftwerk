@@ -5,6 +5,7 @@ pub mod models;
 
 use app_state::AppState;
 use commands::connection;
+use commands::console;
 use commands::domain;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,6 +32,11 @@ pub fn run() {
             domain::resume_domain,
             domain::reboot_domain,
             domain::get_domain_xml,
+            // Console
+            console::open_console,
+            console::console_send,
+            console::close_console,
+            console::console_is_active,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use virt::connect::Connect;
 use virt::domain::Domain;
 
+use crate::libvirt::console::ConsoleSession;
 use crate::models::error::VirtManagerError;
 use crate::models::vm::{GraphicsType, VmInfo, VmState};
 use crate::libvirt::xml_helpers;
@@ -85,51 +86,39 @@ impl LibvirtConnection {
 
     /// Start a domain by name.
     pub fn start_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "start", |d| {
-            d.create().map(|_| ())
-        })
+        self.with_domain(name, "start", |d| d.create().map(|_| ()))
     }
 
     /// Gracefully shutdown a domain by name.
     pub fn shutdown_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "shutdown", |d| {
-            d.shutdown().map(|_| ())
-        })
+        self.with_domain(name, "shutdown", |d| d.shutdown().map(|_| ()))
     }
 
     /// Force stop a domain by name.
     pub fn destroy_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "destroy", |d| {
-            d.destroy().map(|_| ())
-        })
+        self.with_domain(name, "destroy", |d| d.destroy().map(|_| ()))
     }
 
     /// Suspend a domain by name.
     pub fn suspend_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "suspend", |d| {
-            d.suspend().map(|_| ())
-        })
+        self.with_domain(name, "suspend", |d| d.suspend().map(|_| ()))
     }
 
     /// Resume a paused domain by name.
     pub fn resume_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "resume", |d| {
-            d.resume().map(|_| ())
-        })
+        self.with_domain(name, "resume", |d| d.resume().map(|_| ()))
     }
 
     /// Reboot a domain by name.
     pub fn reboot_domain(&self, name: &str) -> Result<(), VirtManagerError> {
-        self.with_domain(name, "reboot", |d| {
-            d.reboot(0).map(|_| ())
-        })
+        self.with_domain(name, "reboot", |d| d.reboot(0).map(|_| ()))
     }
 
     /// Get the XML description for a domain.
     pub fn get_domain_xml(&self, name: &str, inactive: bool) -> Result<String, VirtManagerError> {
         self.with_connection(|conn| {
             let domain = Self::lookup_domain(conn, name)?;
-            let flags = if inactive { 2 } else { 0 }; // VIR_DOMAIN_XML_INACTIVE = 2
+            let flags = if inactive { 2 } else { 0 };
             domain
                 .get_xml_desc(flags)
                 .map_err(|e| VirtManagerError::OperationFailed {
@@ -137,6 +126,23 @@ impl LibvirtConnection {
                     reason: e.to_string(),
                 })
         })
+    }
+
+    /// Open a console session for a domain. The on_data callback receives
+    /// bytes from the VM's serial console on a background thread.
+    pub fn with_console<F>(
+        &self,
+        domain_name: &str,
+        on_data: F,
+    ) -> Result<ConsoleSession, VirtManagerError>
+    where
+        F: Fn(Vec<u8>) + Send + 'static,
+    {
+        let guard = self.inner.lock().unwrap();
+        match guard.as_ref() {
+            Some(conn) => ConsoleSession::open(conn, domain_name, on_data),
+            None => Err(VirtManagerError::NotConnected),
+        }
     }
 
     // -- Private helpers --
@@ -158,7 +164,6 @@ impl LibvirtConnection {
         })
     }
 
-    /// Execute an operation on a named domain, mapping virt errors to VirtManagerError.
     fn with_domain<F>(&self, name: &str, op_name: &str, op: F) -> Result<(), VirtManagerError>
     where
         F: FnOnce(&Domain) -> Result<(), virt::error::Error>,
