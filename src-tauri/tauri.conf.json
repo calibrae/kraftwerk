@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "virtmanager-rs",
+  "productName": "VirtManager",
   "version": "0.1.0",
-  "identifier": "com.cali.virtmanager-rs",
+  "identifier": "com.cali.virtmanager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "virtmanager-rs",
-        "width": 800,
-        "height": 600
+        "title": "VirtManager",
+        "width": 1100,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 500
       }
     ],
     "security": {

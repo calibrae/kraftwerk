@@ -1,156 +1,98 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import VmDetail from "$lib/components/VmDetail.svelte";
+  import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
+  import { loadConnections, getState, clearError } from "$lib/stores/app.svelte.js";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  const state = getState();
+  let showConnectionDialog = $state(false);
 
-  async function greet(event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-  }
+  onMount(() => {
+    loadConnections();
+  });
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<div class="app-layout">
+  <Sidebar onAddConnection={() => showConnectionDialog = true} />
+  <VmDetail />
+</div>
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+<ConnectionDialog bind:open={showConnectionDialog} />
+
+{#if state.error}
+  <div class="toast-error">
+    <span>{state.error?.message || JSON.stringify(state.error)}</span>
+    <button onclick={clearError}>&#x2715;</button>
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+{/if}
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+  :global(*) {
+    box-sizing: border-box;
   }
 
-  a:hover {
-    color: #24c8db;
+  :global(body) {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--bg);
+    overflow: hidden;
   }
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+  :global(:root) {
+    --bg: #1a1a2e;
+    --bg-sidebar: #16162a;
+    --bg-surface: #1e1e3a;
+    --bg-button: #252547;
+    --bg-hover: #2a2a50;
+    --bg-selected: #33335a;
+    --bg-input: #1a1a35;
+    --border: #2d2d55;
+    --text: #e4e4f0;
+    --text-muted: #8888aa;
+    --accent: #6366f1;
+    --accent-dim: rgba(99, 102, 241, 0.2);
   }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
 
+  .app-layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .toast-error {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    max-width: 400px;
+    padding: 12px 16px;
+    background: rgba(127, 29, 29, 0.95);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 8px;
+    color: #fca5a5;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .toast-error span {
+    flex: 1;
+    word-break: break-word;
+  }
+
+  .toast-error button {
+    background: none;
+    border: none;
+    color: #fca5a5;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0;
+    flex-shrink: 0;
+  }
 </style>
