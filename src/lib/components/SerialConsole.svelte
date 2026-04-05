@@ -17,7 +17,7 @@
     try {
       // Dynamic import — crytter ships as WASM + JS glue
       const crytter = await import("crytter-wasm");
-      await crytter.default();
+      await crytter.default("/crytter_wasm_bg.wasm");
 
       term = new crytter.Terminal({
         fontFamily: "Menlo, Monaco, 'Courier New', monospace",

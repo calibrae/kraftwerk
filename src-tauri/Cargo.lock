@@ -4667,6 +4667,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "keyring",
+ "libc",
  "log",
  "mockall",
  "quick-xml 0.37.5",

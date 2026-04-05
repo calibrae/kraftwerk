@@ -3,13 +3,27 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import VmDetail from "$lib/components/VmDetail.svelte";
   import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
-  import { loadConnections, getState, clearError } from "$lib/stores/app.svelte.js";
+  import { loadConnections, addConnection, connect, getState, clearError } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
   let showConnectionDialog = $state(false);
 
-  onMount(() => {
-    loadConnections();
+  const DEV_CONNECTION = {
+    name: "testhost",
+    uri: "qemu+ssh://testuser@testhost/system",
+    authType: "ssh_agent",
+  };
+
+  onMount(async () => {
+    await loadConnections();
+
+    // Dev mode: auto-add and connect to testhost if no connections exist
+    if (appState.savedConnections.length === 0) {
+      try {
+        const conn = await addConnection(DEV_CONNECTION.name, DEV_CONNECTION.uri, DEV_CONNECTION.authType);
+        await connect(conn.id);
+      } catch (_) {}
+    }
   });
 </script>
 

@@ -25,6 +25,7 @@ env_logger = "0.11"
 keyring = { version = "3", features = ["apple-native", "linux-native"] }
 quick-xml = "0.37"
 regex = "1"
+libc = "0.2"
 tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
