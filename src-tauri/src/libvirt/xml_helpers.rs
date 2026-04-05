@@ -18,10 +18,10 @@ pub fn escape_xml(input: &str) -> String {
 }
 
 static GRAPHICS_TYPE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<graphics\s+type="(\w+)""#).unwrap());
+    LazyLock::new(|| Regex::new(r#"<graphics\s+type=['"]([\w]+)['""]"#).unwrap());
 
 static SERIAL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<(serial|console)\s+type="#).unwrap());
+    LazyLock::new(|| Regex::new(r#"<(serial|console)\s+type=["']"#).unwrap());
 
 /// Extract the graphics type (vnc/spice) from domain XML.
 pub fn extract_graphics_type(xml: &str) -> Option<String> {
@@ -51,14 +51,14 @@ mod tests {
     }
 
     #[test]
-    fn extract_graphics_vnc() {
+    fn extract_graphics_vnc_double_quotes() {
         let xml = r#"<domain><devices><graphics type="vnc" port="-1"/></devices></domain>"#;
         assert_eq!(extract_graphics_type(xml), Some("vnc".into()));
     }
 
     #[test]
-    fn extract_graphics_spice() {
-        let xml = r#"<domain><devices><graphics type="spice" autoport="yes"/></devices></domain>"#;
+    fn extract_graphics_spice_single_quotes() {
+        let xml = "<domain><devices><graphics type='spice' autoport='yes'/></devices></domain>";
         assert_eq!(extract_graphics_type(xml), Some("spice".into()));
     }
 
@@ -69,14 +69,14 @@ mod tests {
     }
 
     #[test]
-    fn has_serial_console_true() {
+    fn has_serial_console_double_quotes() {
         let xml = r#"<domain><devices><serial type="pty"/></devices></domain>"#;
         assert!(has_serial_console(xml));
     }
 
     #[test]
-    fn has_serial_console_with_console_element() {
-        let xml = r#"<domain><devices><console type="pty"/></devices></domain>"#;
+    fn has_serial_console_single_quotes() {
+        let xml = "<domain><devices><console type='pty'/></devices></domain>";
         assert!(has_serial_console(xml));
     }
 

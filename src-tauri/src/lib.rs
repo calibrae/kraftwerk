@@ -1,7 +1,7 @@
-mod app_state;
+pub mod app_state;
 mod commands;
-mod libvirt;
-mod models;
+pub mod libvirt;
+pub mod models;
 
 use app_state::AppState;
 use commands::connection;
