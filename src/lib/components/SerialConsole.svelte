@@ -5,84 +5,90 @@
 
   let { vmName, onClose } = $props();
 
-  let terminalEl = $state(null);
-  let buffer = $state("");
+  let containerEl = $state(null);
   let connected = $state(false);
   let error = $state(null);
   let unlisten = null;
+  let term = null;
+  let renderLoop = null;
+  let blinkInterval = null;
 
   onMount(async () => {
     try {
+      // Dynamic import — crytter ships as WASM + JS glue
+      const crytter = await import("crytter-wasm");
+      await crytter.default();
+
+      term = new crytter.Terminal({
+        fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+        fontSize: 14,
+        cols: 120,
+        rows: 30,
+      });
+      term.open(containerEl);
+      term.fit();
+
+      // Render loop (required — writes are batched via rAF)
+      function frame() {
+        if (term) term.render();
+        renderLoop = requestAnimationFrame(frame);
+      }
+      renderLoop = requestAnimationFrame(frame);
+
+      // Cursor blink
+      blinkInterval = setInterval(() => { if (term) term.blinkCursor(); }, 530);
+
+      // Keyboard input → send to VM
+      const handleKey = async (e) => {
+        if (!term || !connected) return;
+        const data = term.handleKeyEvent(e);
+        if (data != null) {
+          e.preventDefault();
+          // Convert string to bytes
+          const bytes = Array.from(new TextEncoder().encode(data));
+          try {
+            await invoke("console_send", { data: bytes });
+          } catch (err) {
+            error = err?.message || String(err);
+          }
+        }
+      };
+      containerEl.addEventListener("keydown", handleKey);
+
       // Listen for data from the VM
       unlisten = await listen("console:data", (event) => {
+        if (!term) return;
         const bytes = new Uint8Array(event.payload);
-        const text = new TextDecoder().decode(bytes);
-        buffer += text;
-        scrollToBottom();
+        // Use writeBytes for raw PTY data
+        const response = term.writeBytes(bytes);
+        // Send device query responses back to the VM
+        if (response) {
+          const respBytes = Array.from(new TextEncoder().encode(response));
+          invoke("console_send", { data: respBytes }).catch(() => {});
+        }
       });
 
       // Open the console
       await invoke("open_console", { name: vmName });
       connected = true;
+
+      // Focus the terminal
+      containerEl.focus();
     } catch (e) {
+      console.error("Console error:", e);
       error = e?.message || JSON.stringify(e);
     }
   });
 
   onDestroy(async () => {
+    if (renderLoop) cancelAnimationFrame(renderLoop);
+    if (blinkInterval) clearInterval(blinkInterval);
     if (unlisten) unlisten();
+    term = null;
     try {
       await invoke("close_console");
     } catch (_) {}
   });
-
-  function scrollToBottom() {
-    if (terminalEl) {
-      // Use requestAnimationFrame to scroll after render
-      requestAnimationFrame(() => {
-        terminalEl.scrollTop = terminalEl.scrollHeight;
-      });
-    }
-  }
-
-  async function handleKeydown(e) {
-    if (!connected) return;
-    e.preventDefault();
-
-    let bytes = null;
-
-    // Map special keys to escape sequences
-    if (e.key === "Enter") bytes = [13];
-    else if (e.key === "Backspace") bytes = [127];
-    else if (e.key === "Tab") bytes = [9];
-    else if (e.key === "Escape") bytes = [27];
-    else if (e.key === "ArrowUp") bytes = [27, 91, 65];
-    else if (e.key === "ArrowDown") bytes = [27, 91, 66];
-    else if (e.key === "ArrowRight") bytes = [27, 91, 67];
-    else if (e.key === "ArrowLeft") bytes = [27, 91, 68];
-    else if (e.key === "Home") bytes = [27, 91, 72];
-    else if (e.key === "End") bytes = [27, 91, 70];
-    else if (e.key === "Delete") bytes = [27, 91, 51, 126];
-    else if (e.key === "PageUp") bytes = [27, 91, 53, 126];
-    else if (e.key === "PageDown") bytes = [27, 91, 54, 126];
-    else if (e.ctrlKey && e.key.length === 1) {
-      // Ctrl+letter → control character
-      const code = e.key.toLowerCase().charCodeAt(0) - 96;
-      if (code > 0 && code < 27) bytes = [code];
-    }
-    else if (e.key.length === 1) {
-      // Regular character
-      bytes = Array.from(new TextEncoder().encode(e.key));
-    }
-
-    if (bytes) {
-      try {
-        await invoke("console_send", { data: bytes });
-      } catch (err) {
-        error = err?.message || String(err);
-      }
-    }
-  }
 </script>
 
 <div class="console-container">
@@ -102,15 +108,13 @@
     <div class="console-error">{error}</div>
   {/if}
 
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <pre
-    class="terminal"
-    bind:this={terminalEl}
+  <div
+    class="terminal-container"
+    bind:this={containerEl}
     tabindex="0"
-    onkeydown={handleKeydown}
     role="textbox"
     aria-label="Serial console terminal"
-  >{buffer}</pre>
+  ></div>
 </div>
 
 <style>
@@ -118,6 +122,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    background: #000;
   }
 
   .console-toolbar {
@@ -182,24 +187,9 @@
     flex-shrink: 0;
   }
 
-  .terminal {
+  .terminal-container {
     flex: 1;
-    margin: 0;
-    padding: 12px;
-    background: #0d0d1a;
-    color: #d4d4e8;
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    font-size: 13px;
-    line-height: 1.4;
-    overflow-y: auto;
-    overflow-x: hidden;
-    white-space: pre-wrap;
-    word-break: break-all;
+    overflow: hidden;
     outline: none;
-    cursor: text;
-  }
-
-  .terminal:focus {
-    box-shadow: inset 0 0 0 1px var(--accent-dim);
   }
 </style>

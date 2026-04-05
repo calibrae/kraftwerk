@@ -2,7 +2,7 @@
   import { getState, connect, disconnect, selectVm, removeConnection, refreshVms } from "$lib/stores/app.svelte.js";
 
   let { onAddConnection } = $props();
-  const state = getState();
+  const appState = getState();
 
   const stateColors = {
     running: "#34d399",
@@ -23,7 +23,7 @@
   };
 
   function connectionStatus(id) {
-    return state.connectionStates[id]?.status ?? "disconnected";
+    return appState.connectionStates[id]?.status ?? "disconnected";
   }
 
   async function handleConnect(id) {
@@ -41,14 +41,14 @@
     <button class="btn-icon" onclick={onAddConnection} title="Add connection">+</button>
   </div>
 
-  {#if state.savedConnections.length === 0}
+  {#if appState.savedConnections.length === 0}
     <div class="empty">
       <p>No connections</p>
       <button class="btn-small" onclick={onAddConnection}>Add one</button>
     </div>
   {:else}
     <ul class="connection-list">
-      {#each state.savedConnections as conn (conn.id)}
+      {#each appState.savedConnections as conn (conn.id)}
         {@const status = connectionStatus(conn.id)}
         <li class="connection-item">
           <div class="connection-header">
@@ -67,12 +67,12 @@
             </div>
           </div>
 
-          {#if status === "connected" && state.selectedConnectionId === conn.id}
+          {#if status === "connected" && appState.selectedConnectionId === conn.id}
             <ul class="vm-list">
-              {#each state.vms as vm (vm.name)}
+              {#each appState.vms as vm (vm.name)}
                 <li
                   class="vm-item"
-                  class:selected={state.selectedVmName === vm.name}
+                  class:selected={appState.selectedVmName === vm.name}
                   onclick={() => selectVm(vm.name)}
                   role="button"
                   tabindex="0"
@@ -90,7 +90,7 @@
 
           {#if status === "error"}
             <div class="connection-error">
-              {state.connectionStates[conn.id]?.message ?? "Connection failed"}
+              {appState.connectionStates[conn.id]?.message ?? "Connection failed"}
             </div>
           {/if}
         </li>

@@ -2,7 +2,7 @@
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
 
-  const state = getState();
+  const appState = getState();
 
   let domainXml = $state(null);
   let showXml = $state(false);
@@ -35,9 +35,9 @@
   function canReboot(s) { return s === "running"; }
 
   async function loadXml() {
-    if (!state.selectedVm) return;
+    if (!appState.selectedVm) return;
     loadingXml = true;
-    domainXml = await getDomainXml(state.selectedVm.name);
+    domainXml = await getDomainXml(appState.selectedVm.name);
     loadingXml = false;
     showXml = true;
   }
@@ -53,18 +53,18 @@
 </script>
 
 <div class="detail">
-  {#if showConsole && state.selectedVm}
-    <SerialConsole vmName={state.selectedVm.name} onClose={closeConsole} />
-  {:else if !state.selectedVm}
+  {#if showConsole && appState.selectedVm}
+    <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
+  {:else if !appState.selectedVm}
     <div class="empty-detail">
-      {#if state.isConnected}
+      {#if appState.isConnected}
         <p>Select a VM from the sidebar</p>
       {:else}
         <p>Connect to a hypervisor to get started</p>
       {/if}
     </div>
   {:else}
-    {@const vm = state.selectedVm}
+    {@const vm = appState.selectedVm}
     <div class="vm-header">
       <div class="vm-title-row">
         <span class="vm-state-badge" style="background: {stateColors[vm.state]}">

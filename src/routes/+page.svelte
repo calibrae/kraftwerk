@@ -5,7 +5,7 @@
   import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
   import { loadConnections, getState, clearError } from "$lib/stores/app.svelte.js";
 
-  const state = getState();
+  const appState = getState();
   let showConnectionDialog = $state(false);
 
   onMount(() => {
@@ -20,9 +20,9 @@
 
 <ConnectionDialog bind:open={showConnectionDialog} />
 
-{#if state.error}
+{#if appState.error}
   <div class="toast-error">
-    <span>{state.error?.message || JSON.stringify(state.error)}</span>
+    <span>{appState.error?.message || JSON.stringify(appState.error)}</span>
     <button onclick={clearError}>&#x2715;</button>
   </div>
 {/if}
