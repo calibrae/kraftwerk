@@ -7,6 +7,7 @@ use app_state::AppState;
 use commands::connection;
 use commands::console;
 use commands::domain;
+use commands::network;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,6 +41,15 @@ pub fn run() {
             console::console_send,
             console::close_console,
             console::console_is_active,
+            // Networks
+            network::list_networks,
+            network::get_network_config,
+            network::get_network_xml,
+            network::start_network,
+            network::stop_network,
+            network::delete_network,
+            network::set_network_autostart,
+            network::create_nat_network,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

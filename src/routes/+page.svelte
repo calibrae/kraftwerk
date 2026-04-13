@@ -2,11 +2,15 @@
   import { onMount } from "svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import VmDetail from "$lib/components/VmDetail.svelte";
+  import NetworksView from "$lib/components/NetworksView.svelte";
   import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
+  import CreateNetworkDialog from "$lib/components/CreateNetworkDialog.svelte";
   import { loadConnections, addConnection, connect, getState, clearError } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
   let showConnectionDialog = $state(false);
+  let showNetworkDialog = $state(false);
+  let view = $state("vms"); // "vms" | "networks"
 
   const DEV_CONNECTION = {
     name: "testhost",
@@ -16,8 +20,6 @@
 
   onMount(async () => {
     await loadConnections();
-
-    // Dev mode: auto-add and connect to testhost if no connections exist
     if (appState.savedConnections.length === 0) {
       try {
         const conn = await addConnection(DEV_CONNECTION.name, DEV_CONNECTION.uri, DEV_CONNECTION.authType);
@@ -29,10 +31,31 @@
 
 <div class="app-layout">
   <Sidebar onAddConnection={() => showConnectionDialog = true} />
-  <VmDetail />
+
+  <main class="main-area">
+    {#if appState.isConnected}
+      <div class="view-tabs">
+        <button class="view-tab" class:active={view === "vms"} onclick={() => view = "vms"}>
+          Virtual Machines <span class="count">{appState.vms.length}</span>
+        </button>
+        <button class="view-tab" class:active={view === "networks"} onclick={() => view = "networks"}>
+          Networks <span class="count">{appState.networks.length}</span>
+        </button>
+      </div>
+    {/if}
+
+    <div class="view-content">
+      {#if view === "networks" && appState.isConnected}
+        <NetworksView onCreateNetwork={() => showNetworkDialog = true} />
+      {:else}
+        <VmDetail />
+      {/if}
+    </div>
+  </main>
 </div>
 
 <ConnectionDialog bind:open={showConnectionDialog} />
+<CreateNetworkDialog bind:open={showNetworkDialog} />
 
 {#if appState.error}
   <div class="toast-error">
@@ -42,18 +65,12 @@
 {/if}
 
 <style>
-  :global(*) {
-    box-sizing: border-box;
-  }
+  :global(*) { box-sizing: border-box; }
 
   :global(body) {
-    margin: 0;
-    padding: 0;
+    margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 14px;
-    color: var(--text);
-    background: var(--bg);
-    overflow: hidden;
+    font-size: 14px; color: var(--text); background: var(--bg); overflow: hidden;
   }
 
   :global(:root) {
@@ -71,16 +88,72 @@
     --accent-dim: rgba(99, 102, 241, 0.2);
   }
 
-  .app-layout {
+  .app-layout { display: flex; height: 100vh; overflow: hidden; }
+
+  .main-area {
+    flex: 1;
     display: flex;
-    height: 100vh;
+    flex-direction: column;
     overflow: hidden;
   }
 
+  .view-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 12px 24px 0;
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .view-tab {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: -1px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .view-tab:hover { color: var(--text); }
+
+  .view-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .count {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--bg-button);
+    border-radius: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .view-tab.active .count {
+    background: var(--accent-dim);
+    color: var(--text);
+  }
+
+  .view-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .view-content > :global(*) { flex: 1; }
+
   .toast-error {
     position: fixed;
-    bottom: 16px;
-    right: 16px;
+    bottom: 16px; right: 16px;
     max-width: 400px;
     padding: 12px 16px;
     background: rgba(127, 29, 29, 0.95);
@@ -95,18 +168,9 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   }
 
-  .toast-error span {
-    flex: 1;
-    word-break: break-word;
-  }
-
+  .toast-error span { flex: 1; word-break: break-word; }
   .toast-error button {
-    background: none;
-    border: none;
-    color: #fca5a5;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 0;
-    flex-shrink: 0;
+    background: none; border: none; color: #fca5a5; cursor: pointer;
+    font-size: 14px; padding: 0; flex-shrink: 0;
   }
 </style>

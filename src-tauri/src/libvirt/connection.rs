@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use virt::connect::Connect;
 use virt::domain::Domain;
+use virt::network::Network;
 
 use crate::libvirt::console::ConsoleSession;
 use crate::models::error::VirtManagerError;
@@ -198,6 +199,124 @@ impl LibvirtConnection {
         crate::libvirt::domain_config::parse(&xml)
     }
 
+
+    // -- Network Management --
+
+    /// List all virtual networks on the hypervisor.
+    pub fn list_networks(&self) -> Result<Vec<crate::models::network::NetworkInfo>, VirtManagerError> {
+        self.with_connection(|conn| {
+            let nets = conn.list_all_networks(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "listNetworks".into(),
+                reason: e.to_string(),
+            })?;
+            let mut results = Vec::with_capacity(nets.len());
+            for net in &nets {
+                if let Some(info) = Self::parse_network(net) {
+                    results.push(info);
+                }
+            }
+            Ok(results)
+        })
+    }
+
+    /// Get the XML for a named network.
+    pub fn get_network_xml(&self, name: &str) -> Result<String, VirtManagerError> {
+        self.with_connection(|conn| {
+            let net = Network::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNetwork".into(),
+                    reason: format!("network '{name}' not found"),
+                }
+            })?;
+            net.get_xml_desc(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getNetworkXML".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Get parsed network config.
+    pub fn get_network_config(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::network_config::NetworkConfig, VirtManagerError> {
+        let xml = self.get_network_xml(name)?;
+        crate::libvirt::network_config::parse(&xml)
+    }
+
+    /// Start an inactive network.
+    pub fn start_network(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_network(name, "startNetwork", |n| n.create().map(|_| ()))
+    }
+
+    /// Stop an active network.
+    pub fn stop_network(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_network(name, "stopNetwork", |n| n.destroy().map(|_| ()))
+    }
+
+    /// Define a new network from XML (without starting it).
+    pub fn define_network(&self, xml: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            Network::define_xml(conn, xml).map(|_| ()).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "defineNetwork".into(),
+                    reason: e.to_string(),
+                }
+            })
+        })
+    }
+
+    /// Create (define + start) a network from XML.
+    pub fn create_network(&self, xml: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let net = Network::define_xml(conn, xml).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "defineNetwork".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            net.create().map(|_| ()).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "startNetwork".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Undefine (remove) a network. Stops it first if active.
+    pub fn delete_network(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let net = Network::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNetwork".into(),
+                    reason: format!("network '{name}' not found"),
+                }
+            })?;
+            if net.is_active().unwrap_or(false) {
+                let _ = net.destroy();
+            }
+            net.undefine().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "undefineNetwork".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Set the autostart flag for a network.
+    pub fn set_network_autostart(&self, name: &str, autostart: bool) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let net = Network::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNetwork".into(),
+                    reason: format!("network '{name}' not found"),
+                }
+            })?;
+            net.set_autostart(autostart).map(|_| ()).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "setAutostart".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     // -- Private helpers --
 
     fn with_connection<F, T>(&self, f: F) -> Result<T, VirtManagerError>
@@ -262,9 +381,68 @@ impl LibvirtConnection {
             has_serial,
         })
     }
+
+
+
+    fn with_network<F>(&self, name: &str, op_name: &str, op: F) -> Result<(), VirtManagerError>
+    where
+        F: FnOnce(&Network) -> Result<(), virt::error::Error>,
+    {
+        self.with_connection(|conn| {
+            let net = Network::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNetwork".into(),
+                    reason: format!("network '{name}' not found"),
+                }
+            })?;
+            op(&net).map_err(|e| VirtManagerError::OperationFailed {
+                operation: op_name.to_string(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Parse a virt::Network into NetworkInfo summary.
+    fn parse_network(net: &Network) -> Option<crate::models::network::NetworkInfo> {
+        let name = net.get_name().ok()?;
+        let uuid = net.get_uuid_string().ok()?;
+        let is_active = net.is_active().unwrap_or(false);
+        let is_persistent = net.is_persistent().unwrap_or(false);
+        let autostart = net.get_autostart().unwrap_or(false);
+        let bridge = net.get_bridge_name().ok();
+
+        // Parse XML for forward mode + IP summary
+        let (forward_mode, ipv4_summary, ipv6_summary) = match net.get_xml_desc(0) {
+            Ok(xml) => {
+                if let Ok(cfg) = crate::libvirt::network_config::parse(&xml) {
+                    let v4 = cfg.ipv4.as_ref().map(crate::libvirt::network_config::ip_summary);
+                    let v6 = cfg.ipv6.as_ref().map(crate::libvirt::network_config::ip_summary);
+                    let mode = if cfg.forward_mode.is_empty() {
+                        "isolated".to_string()
+                    } else {
+                        cfg.forward_mode
+                    };
+                    (mode, v4, v6)
+                } else {
+                    ("unknown".to_string(), None, None)
+                }
+            }
+            Err(_) => ("unknown".to_string(), None, None),
+        };
+
+        Some(crate::models::network::NetworkInfo {
+            name,
+            uuid,
+            is_active,
+            is_persistent,
+            autostart,
+            bridge,
+            forward_mode,
+            ipv4_summary,
+            ipv6_summary,
+        })
+    }
 }
-
-
 /// VIR_DOMAIN_AFFECT_LIVE=1, VIR_DOMAIN_AFFECT_CONFIG=2
 fn domain_modify_flags(live: bool, config: bool) -> u32 {
     let mut flags: u32 = 0;

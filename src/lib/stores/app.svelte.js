@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 let savedConnections = $state([]);
 let connectionStates = $state({});
 let vms = $state([]);
+let networks = $state([]);
 let selectedConnectionId = $state(null);
 let selectedVmName = $state(null);
 let error = $state(null);
@@ -17,6 +18,7 @@ export function getState() {
     get savedConnections() { return savedConnections; },
     get connectionStates() { return connectionStates; },
     get vms() { return vms; },
+    get networks() { return networks; },
     get selectedConnectionId() { return selectedConnectionId; },
     get selectedVmName() { return selectedVmName; },
     get error() { return error; },
@@ -82,6 +84,8 @@ export async function connect(id) {
     connectionStates = { ...connectionStates, [id]: { status: "connected" } };
     vms = domainList;
     selectedVmName = null;
+    // Load networks in parallel
+    try { networks = await invoke("list_networks"); } catch (_) { networks = []; }
   } catch (e) {
     connectionStates = { ...connectionStates, [id]: { status: "error", message: e.message || String(e) } };
     error = e;
@@ -96,6 +100,7 @@ export async function disconnect(id) {
     connectionStates = { ...connectionStates, [id]: { status: "disconnected" } };
     if (selectedConnectionId === id) {
       vms = [];
+      networks = [];
       selectedVmName = null;
     }
   } catch (e) {
@@ -175,4 +180,50 @@ export async function getDomainXml(name, inactive = false) {
     error = e;
     return null;
   }
+}
+
+
+export async function refreshNetworks() {
+  try { networks = await invoke("list_networks"); } catch (e) { error = e; }
+}
+
+export async function startNetwork(name) {
+  try { error = null; await invoke("start_network", { name }); await refreshNetworks(); }
+  catch (e) { error = e; }
+}
+
+export async function stopNetwork(name) {
+  try { error = null; await invoke("stop_network", { name }); await refreshNetworks(); }
+  catch (e) { error = e; }
+}
+
+export async function deleteNetwork(name) {
+  try { error = null; await invoke("delete_network", { name }); await refreshNetworks(); }
+  catch (e) { error = e; }
+}
+
+export async function setNetworkAutostart(name, autostart) {
+  try { error = null; await invoke("set_network_autostart", { name, autostart }); await refreshNetworks(); }
+  catch (e) { error = e; }
+}
+
+export async function createNatNetwork(params) {
+  try {
+    error = null;
+    await invoke("create_nat_network", params);
+    await refreshNetworks();
+  } catch (e) {
+    error = e;
+    throw e;
+  }
+}
+
+export async function getNetworkConfig(name) {
+  try { return await invoke("get_network_config", { name }); }
+  catch (e) { error = e; return null; }
+}
+
+export async function getNetworkXml(name) {
+  try { return await invoke("get_network_xml", { name }); }
+  catch (e) { error = e; return null; }
 }

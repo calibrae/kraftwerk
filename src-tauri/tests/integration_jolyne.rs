@@ -304,3 +304,169 @@ fn test_parse_all_vms_succeeds() {
         assert!(!cfg.uuid.is_empty());
     }
 }
+
+// ─── Network management tests ───
+//
+// These tests create a network with a unique name (`virtmanager-test-net`)
+// to avoid clashing with any existing configuration. The network is always
+// cleaned up at the end, even on panic (via defer pattern with Drop guard).
+
+const TEST_NET_NAME: &str = "virtmanager-test-net";
+const TEST_NET_BRIDGE: &str = "virbr-vmt";
+
+/// Cleanup guard: ensures the test network is removed even if a test panics.
+struct NetworkCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    name: &'static str,
+}
+
+impl<'a> Drop for NetworkCleanup<'a> {
+    fn drop(&mut self) {
+        let _ = self.conn.delete_network(self.name);
+    }
+}
+
+fn ensure_clean(conn: &LibvirtConnection) {
+    // Best-effort: remove any stale test network
+    let _ = conn.delete_network(TEST_NET_NAME);
+}
+
+#[test]
+fn test_list_networks() {
+    let conn = connect_testhost();
+    let nets = conn.list_networks().expect("list_networks");
+    // testhost has no libvirt-managed networks by default, but the call should succeed
+    println!("Found {} networks", nets.len());
+    for n in &nets {
+        println!("  - {} [{}] active={} bridge={:?}", n.name, n.forward_mode, n.is_active, n.bridge);
+    }
+}
+
+#[test]
+fn test_create_and_delete_network() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+
+    let _guard = NetworkCleanup {
+        conn: &conn,
+        name: TEST_NET_NAME,
+    };
+
+    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+        TEST_NET_NAME,
+        TEST_NET_BRIDGE,
+        "10.99.99.1",
+        "255.255.255.0",
+        Some("10.99.99.100"),
+        Some("10.99.99.200"),
+    );
+
+    conn.create_network(&xml).expect("create_network");
+
+    let nets = conn.list_networks().unwrap();
+    let net = nets.iter().find(|n| n.name == TEST_NET_NAME);
+    assert!(net.is_some(), "Test network should be listed");
+    let net = net.unwrap();
+    assert!(net.is_active, "Newly created network should be active");
+    assert_eq!(net.forward_mode, "nat");
+
+    // Cleanup happens via guard
+}
+
+#[test]
+fn test_network_config_roundtrip() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup {
+        conn: &conn,
+        name: TEST_NET_NAME,
+    };
+
+    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+        TEST_NET_NAME,
+        TEST_NET_BRIDGE,
+        "10.99.99.1",
+        "255.255.255.0",
+        Some("10.99.99.100"),
+        Some("10.99.99.200"),
+    );
+    conn.create_network(&xml).unwrap();
+
+    let cfg = conn.get_network_config(TEST_NET_NAME).expect("get_network_config");
+    assert_eq!(cfg.name, TEST_NET_NAME);
+    assert_eq!(cfg.forward_mode, "nat");
+    assert_eq!(cfg.bridge.as_deref(), Some(TEST_NET_BRIDGE));
+    let v4 = cfg.ipv4.unwrap();
+    assert_eq!(v4.address, "10.99.99.1");
+    assert_eq!(v4.dhcp_ranges.len(), 1);
+    assert_eq!(v4.dhcp_ranges[0].start, "10.99.99.100");
+}
+
+#[test]
+fn test_network_stop_and_start() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup {
+        conn: &conn,
+        name: TEST_NET_NAME,
+    };
+
+    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+        TEST_NET_NAME,
+        TEST_NET_BRIDGE,
+        "10.99.99.1",
+        "255.255.255.0",
+        None,
+        None,
+    );
+    conn.create_network(&xml).unwrap();
+
+    // Stop
+    conn.stop_network(TEST_NET_NAME).expect("stop_network");
+    let nets = conn.list_networks().unwrap();
+    let net = nets.iter().find(|n| n.name == TEST_NET_NAME).unwrap();
+    assert!(!net.is_active, "Should be stopped");
+
+    // Start again
+    conn.start_network(TEST_NET_NAME).expect("start_network");
+    let nets = conn.list_networks().unwrap();
+    let net = nets.iter().find(|n| n.name == TEST_NET_NAME).unwrap();
+    assert!(net.is_active, "Should be active after start");
+}
+
+#[test]
+fn test_network_autostart_toggle() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup {
+        conn: &conn,
+        name: TEST_NET_NAME,
+    };
+
+    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+        TEST_NET_NAME,
+        TEST_NET_BRIDGE,
+        "10.99.99.1",
+        "255.255.255.0",
+        None,
+        None,
+    );
+    conn.create_network(&xml).unwrap();
+
+    conn.set_network_autostart(TEST_NET_NAME, true).expect("set autostart true");
+    let nets = conn.list_networks().unwrap();
+    let net = nets.iter().find(|n| n.name == TEST_NET_NAME).unwrap();
+    assert!(net.autostart);
+
+    conn.set_network_autostart(TEST_NET_NAME, false).expect("set autostart false");
+    let nets = conn.list_networks().unwrap();
+    let net = nets.iter().find(|n| n.name == TEST_NET_NAME).unwrap();
+    assert!(!net.autostart);
+}
+
+#[test]
+fn test_get_network_nonexistent_fails() {
+    let conn = connect_testhost();
+    let result = conn.get_network_xml("this-network-does-not-exist-99999");
+    assert!(result.is_err());
+}
