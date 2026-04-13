@@ -470,3 +470,125 @@ fn test_get_network_nonexistent_fails() {
     let result = conn.get_network_xml("this-network-does-not-exist-99999");
     assert!(result.is_err());
 }
+
+// ─── Network creation modes ───
+
+use virtmanager_rs_lib::libvirt::network_config::{
+    build_network_xml, Ipv4BuildParams, Ipv6BuildParams, NetworkBuildParams,
+};
+
+#[test]
+fn test_create_isolated_network() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
+
+    let xml = build_network_xml(&NetworkBuildParams {
+        name: TEST_NET_NAME,
+        forward_mode: "isolated",
+        bridge_name: TEST_NET_BRIDGE,
+        forward_dev: None,
+        domain_name: None,
+        ipv4: Some(Ipv4BuildParams {
+            address: "10.99.99.1",
+            netmask: "255.255.255.0",
+            dhcp_start: None,
+            dhcp_end: None,
+        }),
+        ipv6: None,
+    });
+    conn.create_network(&xml).expect("create isolated");
+
+    let cfg = conn.get_network_config(TEST_NET_NAME).unwrap();
+    // Isolated networks have no <forward> — our parser reports empty string
+    assert!(cfg.forward_mode.is_empty(),
+        "isolated should parse as empty forward_mode, got {:?}", cfg.forward_mode);
+    assert_eq!(cfg.ipv4.unwrap().address, "10.99.99.1");
+}
+
+#[test]
+fn test_create_route_network_without_dev() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
+
+    let xml = build_network_xml(&NetworkBuildParams {
+        name: TEST_NET_NAME,
+        forward_mode: "route",
+        bridge_name: TEST_NET_BRIDGE,
+        forward_dev: None,
+        domain_name: None,
+        ipv4: Some(Ipv4BuildParams {
+            address: "10.99.99.1",
+            netmask: "255.255.255.0",
+            dhcp_start: None,
+            dhcp_end: None,
+        }),
+        ipv6: None,
+    });
+    conn.create_network(&xml).expect("create route");
+
+    let cfg = conn.get_network_config(TEST_NET_NAME).unwrap();
+    assert_eq!(cfg.forward_mode, "route");
+}
+
+#[test]
+fn test_create_open_network() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
+
+    let xml = build_network_xml(&NetworkBuildParams {
+        name: TEST_NET_NAME,
+        forward_mode: "open",
+        bridge_name: TEST_NET_BRIDGE,
+        forward_dev: None,
+        domain_name: None,
+        ipv4: Some(Ipv4BuildParams {
+            address: "10.99.99.1",
+            netmask: "255.255.255.0",
+            dhcp_start: None,
+            dhcp_end: None,
+        }),
+        ipv6: None,
+    });
+    conn.create_network(&xml).expect("create open");
+
+    let cfg = conn.get_network_config(TEST_NET_NAME).unwrap();
+    assert_eq!(cfg.forward_mode, "open");
+}
+
+#[test]
+fn test_create_nat_with_domain_and_dhcp() {
+    let conn = connect_testhost();
+    ensure_clean(&conn);
+    let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
+
+    let xml = build_network_xml(&NetworkBuildParams {
+        name: TEST_NET_NAME,
+        forward_mode: "nat",
+        bridge_name: TEST_NET_BRIDGE,
+        forward_dev: None,
+        domain_name: Some("test.local"),
+        ipv4: Some(Ipv4BuildParams {
+            address: "10.99.99.1",
+            netmask: "255.255.255.0",
+            dhcp_start: Some("10.99.99.100"),
+            dhcp_end: Some("10.99.99.200"),
+        }),
+        ipv6: None,
+    });
+    conn.create_network(&xml).expect("create nat");
+
+    let cfg = conn.get_network_config(TEST_NET_NAME).unwrap();
+    assert_eq!(cfg.forward_mode, "nat");
+    assert_eq!(cfg.domain_name.as_deref(), Some("test.local"));
+    let v4 = cfg.ipv4.unwrap();
+    assert_eq!(v4.dhcp_ranges.len(), 1);
+    assert_eq!(v4.dhcp_ranges[0].start, "10.99.99.100");
+}
+
+// Note: "bridge" mode (host bridge passthrough) requires the bridge to already
+// exist on the host. testhost has host bridges "lan", "domo", "wan" — but attaching
+// a libvirt network to them could disrupt the host. We validate the XML shape
+// via unit tests only, not a real create.

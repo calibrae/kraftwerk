@@ -252,7 +252,120 @@ fn netmask_to_prefix(netmask: Option<&str>) -> u32 {
 }
 
 /// Build a minimal network XML for creating a simple NAT network.
-/// Used by the creation wizard.
+/// Parameters for creating a new network.
+///
+/// Different forward modes require different subsets of fields:
+/// - **nat / route / open / isolated**: `bridge_name` is a new bridge libvirt will create,
+///   plus typically `ipv4` and/or `ipv6`. DHCP is optional per family.
+///   For `route`, `forward_dev` optionally pins the physical uplink interface.
+///   For `isolated`, pass "isolated" or empty string — no `<forward>` element is emitted.
+/// - **bridge**: `bridge_name` is the name of a *pre-existing* host bridge (e.g. `br0`).
+///   IPv4/IPv6 config is ignored since the host manages addressing.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkBuildParams<'a> {
+    pub name: &'a str,
+    /// "nat" | "route" | "open" | "bridge" | "isolated" (empty = isolated)
+    pub forward_mode: &'a str,
+    pub bridge_name: &'a str,
+    /// For `route` / `bridge` modes, pins a specific host interface.
+    pub forward_dev: Option<&'a str>,
+    /// Optional internal DNS domain (e.g. "example.local").
+    pub domain_name: Option<&'a str>,
+    pub ipv4: Option<Ipv4BuildParams<'a>>,
+    pub ipv6: Option<Ipv6BuildParams<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ipv4BuildParams<'a> {
+    pub address: &'a str,
+    pub netmask: &'a str,
+    pub dhcp_start: Option<&'a str>,
+    pub dhcp_end: Option<&'a str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ipv6BuildParams<'a> {
+    pub address: &'a str,
+    pub prefix: u32,
+    pub dhcp_start: Option<&'a str>,
+    pub dhcp_end: Option<&'a str>,
+}
+
+/// Build a libvirt network XML from structured parameters.
+/// Handles all supported forward modes.
+pub fn build_network_xml(p: &NetworkBuildParams) -> String {
+    use crate::libvirt::xml_helpers::escape_xml;
+
+    let mut xml = String::from("<network>\n");
+    xml.push_str(&format!("  <name>{}</name>\n", escape_xml(p.name)));
+
+    let mode_lower = p.forward_mode.trim().to_lowercase();
+    let include_forward = !mode_lower.is_empty() && mode_lower != "isolated";
+    if include_forward {
+        match p.forward_dev {
+            Some(dev) if !dev.is_empty() => xml.push_str(&format!(
+                "  <forward mode='{}' dev='{}'/>\n",
+                escape_xml(&mode_lower),
+                escape_xml(dev),
+            )),
+            _ => xml.push_str(&format!("  <forward mode='{}'/>\n", escape_xml(&mode_lower))),
+        }
+    }
+
+    if !p.bridge_name.is_empty() {
+        xml.push_str(&format!("  <bridge name='{}'/>\n", escape_xml(p.bridge_name)));
+    }
+
+    if let Some(domain) = p.domain_name {
+        if !domain.is_empty() {
+            xml.push_str(&format!("  <domain name='{}'/>\n", escape_xml(domain)));
+        }
+    }
+
+    // bridge mode: host-managed, skip all <ip> config.
+    if mode_lower != "bridge" {
+        if let Some(v4) = &p.ipv4 {
+            xml.push_str(&format!(
+                "  <ip address='{}' netmask='{}'>\n",
+                escape_xml(v4.address),
+                escape_xml(v4.netmask),
+            ));
+            if let (Some(s), Some(e)) = (v4.dhcp_start, v4.dhcp_end) {
+                if !s.is_empty() && !e.is_empty() {
+                    xml.push_str(&format!(
+                        "    <dhcp>\n      <range start='{}' end='{}'/>\n    </dhcp>\n",
+                        escape_xml(s),
+                        escape_xml(e),
+                    ));
+                }
+            }
+            xml.push_str("  </ip>\n");
+        }
+
+        if let Some(v6) = &p.ipv6 {
+            xml.push_str(&format!(
+                "  <ip family='ipv6' address='{}' prefix='{}'>\n",
+                escape_xml(v6.address),
+                v6.prefix,
+            ));
+            if let (Some(s), Some(e)) = (v6.dhcp_start, v6.dhcp_end) {
+                if !s.is_empty() && !e.is_empty() {
+                    xml.push_str(&format!(
+                        "    <dhcp>\n      <range start='{}' end='{}'/>\n    </dhcp>\n",
+                        escape_xml(s),
+                        escape_xml(e),
+                    ));
+                }
+            }
+            xml.push_str("  </ip>\n");
+        }
+    }
+
+    xml.push_str("</network>\n");
+    xml
+}
+
+/// Thin wrapper for backward-compat NAT-only creation.
 pub fn build_nat_network_xml(
     name: &str,
     bridge: &str,
@@ -261,28 +374,21 @@ pub fn build_nat_network_xml(
     dhcp_start: Option<&str>,
     dhcp_end: Option<&str>,
 ) -> String {
-    use crate::libvirt::xml_helpers::escape_xml;
-
-    let mut xml = format!(
-        "<network>\n  <name>{}</name>\n  <forward mode='nat'/>\n  <bridge name='{}'/>\n  <ip address='{}' netmask='{}'>\n",
-        escape_xml(name),
-        escape_xml(bridge),
-        escape_xml(ipv4_address),
-        escape_xml(ipv4_netmask),
-    );
-
-    if let (Some(s), Some(e)) = (dhcp_start, dhcp_end) {
-        xml.push_str(&format!(
-            "    <dhcp>\n      <range start='{}' end='{}'/>\n    </dhcp>\n",
-            escape_xml(s),
-            escape_xml(e),
-        ));
-    }
-
-    xml.push_str("  </ip>\n</network>\n");
-    xml
+    build_network_xml(&NetworkBuildParams {
+        name,
+        forward_mode: "nat",
+        bridge_name: bridge,
+        forward_dev: None,
+        domain_name: None,
+        ipv4: Some(Ipv4BuildParams {
+            address: ipv4_address,
+            netmask: ipv4_netmask,
+            dhcp_start,
+            dhcp_end,
+        }),
+        ipv6: None,
+    })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +602,208 @@ mod tests {
         let v4 = cfg.ipv4.unwrap();
         assert_eq!(v4.address, "172.16.0.1");
         assert_eq!(v4.dhcp_ranges.len(), 1);
+    }
+
+    fn nat_v4(name: &str) -> NetworkBuildParams {
+        NetworkBuildParams {
+            name,
+            forward_mode: "nat",
+            bridge_name: "virbr10",
+            forward_dev: None,
+            domain_name: None,
+            ipv4: Some(Ipv4BuildParams {
+                address: "10.10.0.1",
+                netmask: "255.255.255.0",
+                dhcp_start: Some("10.10.0.100"),
+                dhcp_end: Some("10.10.0.200"),
+            }),
+            ipv6: None,
+        }
+    }
+
+    #[test]
+    fn builder_nat_matches_wrapper() {
+        let a = build_network_xml(&nat_v4("n"));
+        let b = build_nat_network_xml("n", "virbr10", "10.10.0.1", "255.255.255.0",
+            Some("10.10.0.100"), Some("10.10.0.200"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn builder_isolated_omits_forward() {
+        let mut p = nat_v4("iso");
+        p.forward_mode = "isolated";
+        let xml = build_network_xml(&p);
+        assert!(!xml.contains("<forward"), "isolated should have no <forward> element");
+        assert!(xml.contains("<bridge name='virbr10'/>"));
+        assert!(xml.contains("<ip address='10.10.0.1'"));
+    }
+
+    #[test]
+    fn builder_empty_mode_is_isolated() {
+        let mut p = nat_v4("iso2");
+        p.forward_mode = "";
+        let xml = build_network_xml(&p);
+        assert!(!xml.contains("<forward"));
+    }
+
+    #[test]
+    fn builder_route_mode() {
+        let mut p = nat_v4("r");
+        p.forward_mode = "route";
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<forward mode='route'/>"));
+        assert!(xml.contains("<ip address='10.10.0.1'"));
+    }
+
+    #[test]
+    fn builder_route_with_uplink_dev() {
+        let mut p = nat_v4("r2");
+        p.forward_mode = "route";
+        p.forward_dev = Some("eth0");
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<forward mode='route' dev='eth0'/>"));
+    }
+
+    #[test]
+    fn builder_open_mode() {
+        let mut p = nat_v4("o");
+        p.forward_mode = "open";
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<forward mode='open'/>"));
+        assert!(xml.contains("<ip address='10.10.0.1'"));
+    }
+
+    #[test]
+    fn builder_bridge_mode_omits_ip_config() {
+        let p = NetworkBuildParams {
+            name: "host-br",
+            forward_mode: "bridge",
+            bridge_name: "br0",
+            forward_dev: None,
+            domain_name: None,
+            ipv4: Some(Ipv4BuildParams {
+                address: "1.2.3.4",
+                netmask: "255.255.255.0",
+                dhcp_start: None,
+                dhcp_end: None,
+            }),
+            ipv6: None,
+        };
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<forward mode='bridge'/>"));
+        assert!(xml.contains("<bridge name='br0'/>"));
+        assert!(!xml.contains("<ip "), "bridge mode must not emit <ip> config");
+        assert!(!xml.contains("<dhcp"));
+    }
+
+    #[test]
+    fn builder_includes_domain_name() {
+        let mut p = nat_v4("d");
+        p.domain_name = Some("lab.local");
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<domain name='lab.local'/>"));
+    }
+
+    #[test]
+    fn builder_omits_empty_domain_name() {
+        let mut p = nat_v4("d");
+        p.domain_name = Some("");
+        let xml = build_network_xml(&p);
+        assert!(!xml.contains("<domain"));
+    }
+
+    #[test]
+    fn builder_ipv6_only() {
+        let p = NetworkBuildParams {
+            name: "v6",
+            forward_mode: "nat",
+            bridge_name: "virbr6",
+            forward_dev: None,
+            domain_name: None,
+            ipv4: None,
+            ipv6: Some(Ipv6BuildParams {
+                address: "fd00::1",
+                prefix: 64,
+                dhcp_start: Some("fd00::100"),
+                dhcp_end: Some("fd00::200"),
+            }),
+        };
+        let xml = build_network_xml(&p);
+        assert!(xml.contains("<ip family='ipv6' address='fd00::1' prefix='64'>"));
+        assert!(xml.contains("start='fd00::100'"));
+        assert!(!xml.contains("family='ipv4'"));
+    }
+
+    #[test]
+    fn builder_dual_stack() {
+        let p = NetworkBuildParams {
+            name: "dual",
+            forward_mode: "nat",
+            bridge_name: "virbrDual",
+            forward_dev: None,
+            domain_name: None,
+            ipv4: Some(Ipv4BuildParams {
+                address: "10.0.0.1",
+                netmask: "255.255.255.0",
+                dhcp_start: None,
+                dhcp_end: None,
+            }),
+            ipv6: Some(Ipv6BuildParams {
+                address: "fd00::1",
+                prefix: 64,
+                dhcp_start: None,
+                dhcp_end: None,
+            }),
+        };
+        let xml = build_network_xml(&p);
+        let cfg = parse(&xml).unwrap();
+        assert!(cfg.ipv4.is_some());
+        assert!(cfg.ipv6.is_some());
+    }
+
+    #[test]
+    fn builder_skips_dhcp_when_partial() {
+        let mut p = nat_v4("n");
+        if let Some(ref mut v4) = p.ipv4 {
+            v4.dhcp_start = Some("");
+            v4.dhcp_end = Some("x");
+        }
+        let xml = build_network_xml(&p);
+        assert!(!xml.contains("<dhcp>"));
+    }
+
+    #[test]
+    fn builder_escapes_all_user_input() {
+        let p = NetworkBuildParams {
+            name: "a'<inject>",
+            forward_mode: "nat",
+            bridge_name: "br'<",
+            forward_dev: Some("e'<"),
+            domain_name: Some("d'<"),
+            ipv4: Some(Ipv4BuildParams {
+                address: "1'<",
+                netmask: "2'<",
+                dhcp_start: Some("3'<"),
+                dhcp_end: Some("4'<"),
+            }),
+            ipv6: None,
+        };
+        let xml = build_network_xml(&p);
+        // No unescaped angle brackets inside attributes / text
+        assert!(!xml.contains("<inject>"));
+        // Actual escape sequences present
+        assert!(xml.contains("&lt;"));
+    }
+
+    #[test]
+    fn builder_route_roundtrip_parses() {
+        let mut p = nat_v4("route-rt");
+        p.forward_mode = "route";
+        p.forward_dev = Some("eth1");
+        let xml = build_network_xml(&p);
+        let cfg = parse(&xml).unwrap();
+        assert_eq!(cfg.forward_mode, "route");
+        assert_eq!(cfg.forward_dev.as_deref(), Some("eth1"));
     }
 }

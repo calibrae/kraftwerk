@@ -50,6 +50,7 @@ pub fn run() {
             network::delete_network,
             network::set_network_autostart,
             network::create_nat_network,
+            network::create_network,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
