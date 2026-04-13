@@ -1,7 +1,6 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
-  import VncConsole from "./VncConsole.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
 
   const appState = getState();
@@ -11,6 +10,8 @@
   let loadingXml = $state(false);
   let showConsole = $state(false);
   let showVnc = $state(false);
+  let VncConsole = $state(null);
+  let loadingVnc = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
 
   const stateColors = {
@@ -61,7 +62,7 @@
 </script>
 
 <div class="detail">
-  {#if showVnc && appState.selectedVm}
+  {#if showVnc && VncConsole && appState.selectedVm}
     <VncConsole vmName={appState.selectedVm.name} onClose={closeVnc} />
   {:else if showConsole && appState.selectedVm}
     <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
@@ -129,7 +130,14 @@
           <button class="btn-action console" onclick={() => showConsole = true}>Serial Console</button>
         {/if}
         {#if vm.graphics_type === "vnc" && vm.state === "running"}
-          <button class="btn-action console" onclick={() => showVnc = true}>VNC Console</button>
+          <button class="btn-action console" onclick={async () => {
+            if (!VncConsole) {
+              loadingVnc = true;
+              try { VncConsole = (await import("./VncConsole.svelte")).default; } catch (e) { console.error(e); }
+              loadingVnc = false;
+            }
+            showVnc = true;
+          }} disabled={loadingVnc}>{loadingVnc ? "Loading VNC..." : "VNC Console"}</button>
         {/if}
       </div>
     </div>

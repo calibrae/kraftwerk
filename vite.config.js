@@ -10,7 +10,7 @@ export default defineConfig(async () => ({
   plugins: [sveltekit(), wasm()],
 
   optimizeDeps: {
-    exclude: ["crytter-wasm", "@novnc/novnc"],
+    exclude: ["crytter-wasm"],
   },
 
   clearScreen: false,
