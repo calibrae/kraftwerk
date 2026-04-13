@@ -184,7 +184,7 @@
 </div>
 
 <style>
-  .storage-view { padding: 24px; height: 100vh; overflow-y: auto; }
+  .storage-view { padding: 24px; height: 100%; overflow-y: auto; }
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .header h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .actions { display: flex; gap: 8px; }

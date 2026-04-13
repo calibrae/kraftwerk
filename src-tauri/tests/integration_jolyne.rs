@@ -1018,3 +1018,123 @@ fn test_vnc_session_ssh_tunnel_to_example-firewall() {
         Duration::from_millis(10),
     ); // no-op to silence unused Read/Write imports
 }
+
+// ─── Live stats sampling ───
+
+#[test]
+fn test_sample_domain_stats_running_vm() {
+    let conn = connect_testhost();
+    let s = conn.sample_domain_stats(TEST_VM).expect("sample stats");
+    assert!(s.timestamp_ms > 0);
+    assert!(s.vcpus > 0);
+    assert!(s.memory_actual_kib > 0);
+    assert!(s.memory_max_kib >= s.memory_actual_kib);
+    // Running VMs accrue CPU time
+    assert!(s.cpu_time_ns > 0, "running VM should have nonzero cpu_time");
+    println!(
+        "  {} sample: cpu={}ns mem={}KiB/{}KiB disks={} nics={}",
+        TEST_VM, s.cpu_time_ns, s.memory_actual_kib, s.memory_max_kib,
+        s.disks.len(), s.interfaces.len()
+    );
+}
+
+#[test]
+fn test_sample_stats_includes_disks_and_nics() {
+    let conn = connect_testhost();
+    // example-firewall has 2 bridged NICs (lan, domo) and a disk
+    let s = conn.sample_domain_stats("example-firewall").expect("sample");
+    assert!(!s.disks.is_empty(), "example-firewall has a disk");
+    assert!(!s.interfaces.is_empty(), "example-firewall has NICs");
+    for nic in &s.interfaces {
+        assert!(nic.rx_bytes >= 0);
+        assert!(nic.tx_bytes >= 0);
+    }
+}
+
+#[test]
+fn test_sample_cpu_time_increments() {
+    let conn = connect_testhost();
+    let s1 = conn.sample_domain_stats(TEST_VM).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let s2 = conn.sample_domain_stats(TEST_VM).unwrap();
+    assert!(
+        s2.cpu_time_ns >= s1.cpu_time_ns,
+        "cpu_time should be monotonic: {} vs {}",
+        s1.cpu_time_ns,
+        s2.cpu_time_ns
+    );
+}
+
+// ─── SPICE via capsaicin integration ───
+
+use virtmanager_rs_lib::libvirt::spice_proxy::{
+    parse_spice_endpoint, parse_spice_password, SpiceSession,
+};
+
+#[test]
+fn test_parse_spice_endpoint_from_prod_brokers_xml() {
+    let conn = connect_testhost();
+    let xml = conn.get_domain_xml("example-broker", false).unwrap();
+    let ep = parse_spice_endpoint(&xml);
+    assert!(ep.is_some(), "example-broker should have SPICE graphics");
+    let (host, port) = ep.unwrap();
+    println!("example-broker SPICE: {host}:{port}");
+    assert!(port >= 5900);
+}
+
+#[test]
+fn test_spice_session_to_prod_brokers() {
+    use capsaicin_client::{ClientEvent, DisplayEvent};
+
+    let conn = connect_testhost();
+    let xml = conn.get_domain_xml("example-broker", false).unwrap();
+    let (listen, port) = parse_spice_endpoint(&xml).expect("SPICE port");
+    let password = parse_spice_password(&xml).unwrap_or_default();
+    let target = virtmanager_rs_lib::libvirt::vnc_proxy::parse_ssh_target(JOLYNE_URI).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut session = SpiceSession::start(&target, &listen, port, &password, runtime.handle())
+        .expect("start SPICE session");
+
+    // Pump events until we see a SurfaceCreated (proves display channel handshake succeeded)
+    // or time out.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut got_surface = false;
+    let mut saw_any_display_event = false;
+
+    runtime.block_on(async {
+        while std::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), session.events_rx.recv()).await {
+                Ok(Some(evt)) => {
+                    match &evt {
+                        ClientEvent::Display(DisplayEvent::SurfaceCreated { width, height, primary, .. }) => {
+                            println!("SPICE SurfaceCreated: {width}x{height} primary={primary}");
+                            got_surface = true;
+                            saw_any_display_event = true;
+                            break;
+                        }
+                        ClientEvent::Display(_) => {
+                            saw_any_display_event = true;
+                        }
+                        ClientEvent::Closed(err) => {
+                            panic!("SPICE connection closed prematurely: {err:?}");
+                        }
+                    }
+                }
+                Ok(None) => panic!("event stream ended"),
+                Err(_) => { /* tick */ }
+            }
+        }
+    });
+
+    assert!(
+        got_surface || saw_any_display_event,
+        "expected at least one Display event within 10s"
+    );
+
+    session.close();
+}

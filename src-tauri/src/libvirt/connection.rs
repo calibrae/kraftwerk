@@ -163,6 +163,15 @@ impl LibvirtConnection {
         })
     }
 
+
+    /// Sample live stats for a domain.
+    pub fn sample_domain_stats(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::domain_stats::DomainStatsSample, VirtManagerError> {
+        self.with_connection(|conn| crate::libvirt::domain_stats::sample(conn, name))
+    }
+
     /// Open a console session for a domain. The on_data callback receives
     /// bytes from the VM's serial console on a background thread.
     pub fn with_console<F>(

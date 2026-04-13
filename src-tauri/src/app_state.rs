@@ -5,6 +5,8 @@ use uuid::Uuid;
 use crate::libvirt::connection::LibvirtConnection;
 use crate::libvirt::console::ConsoleSession;
 use crate::libvirt::vnc_proxy::VncSession;
+use crate::libvirt::spice_proxy::SpiceSession;
+use capsaicin_client::InputEvent as SpiceInput;
 use crate::models::connection::SavedConnection;
 use crate::models::error::VirtManagerError;
 use crate::models::state::ConnectionState;
@@ -19,6 +21,7 @@ pub struct AppState {
     connection_states: Mutex<HashMap<Uuid, ConnectionState>>,
     console: Mutex<Option<ConsoleSession>>,
     vnc: Mutex<Option<VncSession>>,
+    spice: Mutex<Option<SpiceSession>>,
     runtime: tokio::runtime::Runtime,
     current_uri: Mutex<Option<String>>,
 }
@@ -31,6 +34,7 @@ impl AppState {
             connection_states: Mutex::new(HashMap::new()),
             console: Mutex::new(None),
             vnc: Mutex::new(None),
+            spice: Mutex::new(None),
             current_uri: Mutex::new(None),
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -178,6 +182,33 @@ impl AppState {
             old.close();
         }
         *guard = Some(session);
+    }
+
+
+    pub fn set_spice(&self, session: SpiceSession) {
+        let mut guard = self.spice.lock().unwrap();
+        if let Some(mut old) = guard.take() {
+            old.close();
+        }
+        *guard = Some(session);
+    }
+
+    pub fn close_spice(&self) {
+        let mut guard = self.spice.lock().unwrap();
+        if let Some(mut session) = guard.take() {
+            session.close();
+        }
+    }
+
+    /// Push an input event to the active SPICE session.
+    pub fn spice_send_input(&self, event: SpiceInput) -> std::io::Result<()> {
+        let guard = self.spice.lock().unwrap();
+        match guard.as_ref() {
+            Some(session) => session.input_tx.try_send(event).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "SPICE session closed")
+            }),
+            None => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no active SPICE session")),
+        }
     }
 
     pub fn close_vnc(&self) {

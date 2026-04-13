@@ -96,3 +96,13 @@ pub fn set_memory_mb(
 pub fn undefine_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().undefine_domain(&name)
 }
+
+
+/// Sample live CPU/memory/disk/network stats for a domain.
+#[tauri::command]
+pub fn get_domain_stats(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<crate::libvirt::domain_stats::DomainStatsSample, VirtManagerError> {
+    state.libvirt().sample_domain_stats(&name)
+}

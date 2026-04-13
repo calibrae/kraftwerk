@@ -10,6 +10,7 @@ use commands::domain;
 use commands::network;
 use commands::vm_creation;
 use commands::vnc;
+use commands::spice;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,6 +38,7 @@ pub fn run() {
             domain::reboot_domain,
             domain::get_domain_xml,
             domain::get_domain_config,
+            domain::get_domain_stats,
             domain::set_vcpus,
             domain::set_memory_mb,
             // Console
@@ -75,6 +77,10 @@ pub fn run() {
             // VNC
             vnc::open_vnc,
             vnc::close_vnc,
+            // SPICE
+            spice::open_spice,
+            spice::close_spice,
+            spice::spice_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

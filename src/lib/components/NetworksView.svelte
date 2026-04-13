@@ -136,7 +136,7 @@
 </div>
 
 <style>
-  .networks-view { padding: 24px; height: 100vh; overflow-y: auto; }
+  .networks-view { padding: 24px; height: 100%; overflow-y: auto; }
 
   .nw-header {
     display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;

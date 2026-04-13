@@ -2,6 +2,7 @@
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
+  import VmOverview from "./VmOverview.svelte";
 
   const appState = getState();
 
@@ -12,6 +13,9 @@
   let showVnc = $state(false);
   let VncConsole = $state(null);
   let loadingVnc = $state(false);
+  let SpiceConsole = $state(null);
+  let loadingSpice = $state(false);
+  let showSpice = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
 
   const stateColors = {
@@ -59,10 +63,16 @@
   function closeVnc() {
     showVnc = false;
   }
+
+  function closeSpice() {
+    showSpice = false;
+  }
 </script>
 
 <div class="detail">
-  {#if showVnc && VncConsole && appState.selectedVm}
+  {#if showSpice && SpiceConsole && appState.selectedVm}
+    <SpiceConsole vmName={appState.selectedVm.name} onClose={closeSpice} />
+  {:else if showVnc && VncConsole && appState.selectedVm}
     <VncConsole vmName={appState.selectedVm.name} onClose={closeVnc} />
   {:else if showConsole && appState.selectedVm}
     <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
@@ -139,6 +149,16 @@
             showVnc = true;
           }} disabled={loadingVnc}>{loadingVnc ? "Loading VNC..." : "VNC Console"}</button>
         {/if}
+        {#if vm.graphics_type === "spice" && vm.state === "running"}
+          <button class="btn-action console" onclick={async () => {
+            if (!SpiceConsole) {
+              loadingSpice = true;
+              try { SpiceConsole = (await import("./SpiceConsole.svelte")).default; } catch (e) { console.error(e); }
+              loadingSpice = false;
+            }
+            showSpice = true;
+          }} disabled={loadingSpice}>{loadingSpice ? "Loading SPICE..." : "SPICE Console"}</button>
+        {/if}
       </div>
     </div>
 
@@ -149,7 +169,9 @@
     </div>
 
     <div class="tab-content">
-      {#if activeTab === "config"}
+      {#if activeTab === "overview"}
+        <VmOverview vmName={vm.name} running={vm.state === "running"} />
+      {:else if activeTab === "config"}
         <VmConfigPanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <div class="vm-xml-section">
@@ -172,7 +194,7 @@
     flex: 1;
     padding: 0;
     overflow-y: auto;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
   }
