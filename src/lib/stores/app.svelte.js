@@ -8,6 +8,8 @@ let savedConnections = $state([]);
 let connectionStates = $state({});
 let vms = $state([]);
 let networks = $state([]);
+let pools = $state([]);
+let volumesByPool = $state({});
 let selectedConnectionId = $state(null);
 let selectedVmName = $state(null);
 let error = $state(null);
@@ -19,6 +21,8 @@ export function getState() {
     get connectionStates() { return connectionStates; },
     get vms() { return vms; },
     get networks() { return networks; },
+    get pools() { return pools; },
+    get volumesByPool() { return volumesByPool; },
     get selectedConnectionId() { return selectedConnectionId; },
     get selectedVmName() { return selectedVmName; },
     get error() { return error; },
@@ -86,6 +90,7 @@ export async function connect(id) {
     selectedVmName = null;
     // Load networks in parallel
     try { networks = await invoke("list_networks"); } catch (_) { networks = []; }
+    try { pools = await invoke("list_storage_pools"); } catch (_) { pools = []; }
   } catch (e) {
     connectionStates = { ...connectionStates, [id]: { status: "error", message: e.message || String(e) } };
     error = e;
@@ -101,6 +106,8 @@ export async function disconnect(id) {
     if (selectedConnectionId === id) {
       vms = [];
       networks = [];
+      pools = [];
+      volumesByPool = {};
       selectedVmName = null;
     }
   } catch (e) {
@@ -226,4 +233,69 @@ export async function getNetworkConfig(name) {
 export async function getNetworkXml(name) {
   try { return await invoke("get_network_xml", { name }); }
   catch (e) { error = e; return null; }
+}
+
+
+// ── Storage actions ──
+
+export async function refreshPools() {
+  try { pools = await invoke("list_storage_pools"); } catch (e) { error = e; }
+}
+
+export async function refreshVolumes(poolName) {
+  try {
+    const vols = await invoke("list_volumes", { poolName });
+    volumesByPool = { ...volumesByPool, [poolName]: vols };
+    return vols;
+  } catch (e) { error = e; return []; }
+}
+
+export async function startPool(name) {
+  try { error = null; await invoke("start_pool", { name }); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function stopPool(name) {
+  try { error = null; await invoke("stop_pool", { name }); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function refreshPoolVolumes(name) {
+  try { error = null; await invoke("refresh_pool", { name }); await refreshVolumes(name); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function deletePool(name) {
+  try { error = null; await invoke("delete_pool", { name }); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function setPoolAutostart(name, autostart) {
+  try { error = null; await invoke("set_pool_autostart", { name, autostart }); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function createPool(req) {
+  try { error = null; await invoke("create_pool", { req }); await refreshPools(); }
+  catch (e) { error = e; throw e; }
+}
+
+export async function createVolume(req) {
+  try {
+    error = null;
+    const path = await invoke("create_volume", { req });
+    await refreshVolumes(req.pool_name);
+    await refreshPools();
+    return path;
+  } catch (e) { error = e; throw e; }
+}
+
+export async function deleteVolume(poolName, path) {
+  try { error = null; await invoke("delete_volume", { path }); await refreshVolumes(poolName); await refreshPools(); }
+  catch (e) { error = e; }
+}
+
+export async function resizeVolume(poolName, path, capacityBytes) {
+  try { error = null; await invoke("resize_volume", { path, capacityBytes }); await refreshVolumes(poolName); }
+  catch (e) { error = e; throw e; }
 }

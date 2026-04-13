@@ -592,3 +592,230 @@ fn test_create_nat_with_domain_and_dhcp() {
 // exist on the host. testhost has host bridges "lan", "domo", "wan" — but attaching
 // a libvirt network to them could disrupt the host. We validate the XML shape
 // via unit tests only, not a real create.
+
+// ─── Storage tests ───
+//
+// testhost already has `default`, `iso`, and `virtmanager-iso` pools.
+// We test against existing pools (read-only) and create a disposable test
+// pool for write operations.
+
+use virtmanager_rs_lib::libvirt::storage_config::{
+    build_pool_xml, build_volume_xml, PoolBuildParams, VolumeBuildParams,
+};
+
+const TEST_POOL_NAME: &str = "virtmanager-storage-test";
+
+struct PoolCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    name: &'static str,
+}
+
+impl<'a> Drop for PoolCleanup<'a> {
+    fn drop(&mut self) {
+        let _ = self.conn.delete_pool(self.name);
+    }
+}
+
+fn clean_pool(conn: &LibvirtConnection) {
+    let _ = conn.delete_pool(TEST_POOL_NAME);
+}
+
+#[test]
+fn test_list_storage_pools() {
+    let conn = connect_testhost();
+    let pools = conn.list_storage_pools().expect("list_storage_pools");
+    assert!(!pools.is_empty(), "testhost has at least one pool");
+    println!("Found {} pools:", pools.len());
+    for p in &pools {
+        println!(
+            "  - {} [{}] active={} cap={:.1}GB alloc={:.1}GB vols={}",
+            p.name,
+            p.pool_type,
+            p.is_active,
+            p.capacity as f64 / 1e9,
+            p.allocation as f64 / 1e9,
+            p.num_volumes,
+        );
+    }
+    // testhost has at least default + iso
+    assert!(pools.iter().any(|p| p.name == "default"));
+}
+
+#[test]
+fn test_default_pool_has_expected_fields() {
+    let conn = connect_testhost();
+    let pools = conn.list_storage_pools().unwrap();
+    let default = pools.iter().find(|p| p.name == "default").unwrap();
+    assert_eq!(default.pool_type, "dir");
+    assert!(default.is_active, "default pool should be active");
+    assert!(default.capacity > 0);
+    assert!(default.num_volumes > 0, "should have existing volumes");
+    assert_eq!(
+        default.target_path.as_deref(),
+        Some("/var/lib/libvirt/images")
+    );
+}
+
+#[test]
+fn test_get_pool_config() {
+    let conn = connect_testhost();
+    let cfg = conn.get_pool_config("default").expect("get_pool_config");
+    assert_eq!(cfg.name, "default");
+    assert_eq!(cfg.pool_type, "dir");
+    assert_eq!(
+        cfg.target_path.as_deref(),
+        Some("/var/lib/libvirt/images")
+    );
+}
+
+#[test]
+fn test_list_volumes_in_default_pool() {
+    let conn = connect_testhost();
+    let vols = conn.list_volumes("default").expect("list_volumes");
+    assert!(!vols.is_empty(), "default pool has volumes");
+    for v in &vols {
+        assert!(!v.name.is_empty());
+        assert!(!v.path.is_empty());
+        // Some volumes (symlinks, empty placeholders) may have 0 capacity
+    }
+    // Known VM disks on testhost
+    let has_example-firewall = vols.iter().any(|v| v.name.contains("example-firewall"));
+    assert!(has_example-firewall, "expected example-firewall disk in default pool");
+}
+
+#[test]
+fn test_pool_lookup_nonexistent_fails() {
+    let conn = connect_testhost();
+    let result = conn.get_pool_xml("this-pool-does-not-exist-99999");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_dir_pool_lifecycle() {
+    let conn = connect_testhost();
+    clean_pool(&conn);
+    let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
+
+    let xml = build_pool_xml(&PoolBuildParams {
+        name: TEST_POOL_NAME,
+        pool_type: "dir",
+        target_path: Some("/tmp/virtmanager-test-pool"),
+        source_host: None,
+        source_dir: None,
+        source_name: None,
+    });
+
+    conn.define_pool(&xml, true, true).expect("define_pool");
+
+    let pools = conn.list_storage_pools().unwrap();
+    let pool = pools.iter().find(|p| p.name == TEST_POOL_NAME).expect("pool should exist");
+    assert_eq!(pool.pool_type, "dir");
+    assert!(pool.is_active, "should be active after create+start");
+    assert_eq!(pool.target_path.as_deref(), Some("/tmp/virtmanager-test-pool"));
+
+    // Stop it
+    conn.stop_pool(TEST_POOL_NAME).expect("stop_pool");
+    let pools = conn.list_storage_pools().unwrap();
+    let pool = pools.iter().find(|p| p.name == TEST_POOL_NAME).unwrap();
+    assert!(!pool.is_active);
+
+    // Start again
+    conn.start_pool(TEST_POOL_NAME).expect("start_pool");
+    let pools = conn.list_storage_pools().unwrap();
+    let pool = pools.iter().find(|p| p.name == TEST_POOL_NAME).unwrap();
+    assert!(pool.is_active);
+}
+
+#[test]
+fn test_create_and_delete_volume() {
+    let conn = connect_testhost();
+    clean_pool(&conn);
+    let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
+
+    // Create a dedicated pool so the test volume is isolated
+    let pool_xml = build_pool_xml(&PoolBuildParams {
+        name: TEST_POOL_NAME,
+        pool_type: "dir",
+        target_path: Some("/tmp/virtmanager-test-pool"),
+        source_host: None,
+        source_dir: None,
+        source_name: None,
+    });
+    conn.define_pool(&pool_xml, true, true).unwrap();
+
+    // Create a 100MB qcow2 volume
+    let vol_xml = build_volume_xml(&VolumeBuildParams {
+        name: "test.qcow2",
+        capacity_bytes: 100 * 1024 * 1024,
+        format: "qcow2",
+        allocation_bytes: None,
+    });
+    let path = conn
+        .create_volume(TEST_POOL_NAME, &vol_xml)
+        .expect("create_volume");
+    assert!(path.contains("test.qcow2"));
+
+    // Verify it's listed
+    let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
+    assert_eq!(vols.len(), 1);
+    assert_eq!(vols[0].name, "test.qcow2");
+    assert_eq!(vols[0].capacity, 100 * 1024 * 1024);
+    assert_eq!(vols[0].format, "qcow2");
+
+    // Resize to 200MB
+    conn.resize_volume(&path, 200 * 1024 * 1024)
+        .expect("resize_volume");
+    let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
+    assert_eq!(vols[0].capacity, 200 * 1024 * 1024);
+
+    // Delete
+    conn.delete_volume(&path).expect("delete_volume");
+    let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
+    assert!(vols.is_empty());
+}
+
+#[test]
+fn test_pool_autostart_toggle() {
+    let conn = connect_testhost();
+    clean_pool(&conn);
+    let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
+
+    let xml = build_pool_xml(&PoolBuildParams {
+        name: TEST_POOL_NAME,
+        pool_type: "dir",
+        target_path: Some("/tmp/virtmanager-test-pool"),
+        source_host: None,
+        source_dir: None,
+        source_name: None,
+    });
+    conn.define_pool(&xml, true, true).unwrap();
+
+    conn.set_pool_autostart(TEST_POOL_NAME, true).expect("set autostart true");
+    let pools = conn.list_storage_pools().unwrap();
+    let pool = pools.iter().find(|p| p.name == TEST_POOL_NAME).unwrap();
+    assert!(pool.autostart);
+
+    conn.set_pool_autostart(TEST_POOL_NAME, false).expect("set autostart false");
+    let pools = conn.list_storage_pools().unwrap();
+    let pool = pools.iter().find(|p| p.name == TEST_POOL_NAME).unwrap();
+    assert!(!pool.autostart);
+}
+
+#[test]
+fn test_refresh_pool() {
+    let conn = connect_testhost();
+    // Refresh a real pool (read-only operation)
+    conn.refresh_pool("default").expect("refresh_pool");
+}
+
+// Production safety: verify we never disturbed existing testhost pools
+#[test]
+fn test_testhost_prod_pools_untouched() {
+    let conn = connect_testhost();
+    let pools = conn.list_storage_pools().unwrap();
+    let names: Vec<&str> = pools.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"default"), "default pool must exist");
+    // Verify default remains active
+    let default = pools.iter().find(|p| p.name == "default").unwrap();
+    assert!(default.is_active, "default must stay active");
+}

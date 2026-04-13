@@ -5,12 +5,18 @@
   import NetworksView from "$lib/components/NetworksView.svelte";
   import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
   import CreateNetworkDialog from "$lib/components/CreateNetworkDialog.svelte";
+  import StorageView from "$lib/components/StorageView.svelte";
+  import CreatePoolDialog from "$lib/components/CreatePoolDialog.svelte";
+  import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import { loadConnections, addConnection, connect, getState, clearError } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
   let showConnectionDialog = $state(false);
   let showNetworkDialog = $state(false);
-  let view = $state("vms"); // "vms" | "networks"
+  let showPoolDialog = $state(false);
+  let showVolumeDialog = $state(false);
+  let volumePoolName = $state("");
+  let view = $state("vms"); // "vms" | "networks" | "storage"
 
   const DEV_CONNECTION = {
     name: "testhost",
@@ -41,12 +47,20 @@
         <button class="view-tab" class:active={view === "networks"} onclick={() => view = "networks"}>
           Networks <span class="count">{appState.networks.length}</span>
         </button>
+        <button class="view-tab" class:active={view === "storage"} onclick={() => view = "storage"}>
+          Storage <span class="count">{appState.pools.length}</span>
+        </button>
       </div>
     {/if}
 
     <div class="view-content">
       {#if view === "networks" && appState.isConnected}
         <NetworksView onCreateNetwork={() => showNetworkDialog = true} />
+      {:else if view === "storage" && appState.isConnected}
+        <StorageView
+          onCreatePool={() => showPoolDialog = true}
+          onCreateVolume={(name) => { volumePoolName = name; showVolumeDialog = true; }}
+        />
       {:else}
         <VmDetail />
       {/if}
@@ -56,6 +70,8 @@
 
 <ConnectionDialog bind:open={showConnectionDialog} />
 <CreateNetworkDialog bind:open={showNetworkDialog} />
+<CreatePoolDialog bind:open={showPoolDialog} />
+<CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />
 
 {#if appState.error}
   <div class="toast-error">

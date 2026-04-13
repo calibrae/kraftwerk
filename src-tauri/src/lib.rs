@@ -8,6 +8,7 @@ use commands::connection;
 use commands::console;
 use commands::domain;
 use commands::network;
+use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,6 +52,20 @@ pub fn run() {
             network::set_network_autostart,
             network::create_nat_network,
             network::create_network,
+            // Storage
+            storage::list_storage_pools,
+            storage::get_pool_xml,
+            storage::get_pool_config,
+            storage::start_pool,
+            storage::stop_pool,
+            storage::refresh_pool,
+            storage::delete_pool,
+            storage::set_pool_autostart,
+            storage::create_pool,
+            storage::list_volumes,
+            storage::create_volume,
+            storage::delete_volume,
+            storage::resize_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

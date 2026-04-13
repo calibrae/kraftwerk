@@ -2,6 +2,8 @@ use std::sync::Mutex;
 use virt::connect::Connect;
 use virt::domain::Domain;
 use virt::network::Network;
+use virt::storage_pool::StoragePool;
+use virt::storage_vol::StorageVol;
 
 use crate::libvirt::console::ConsoleSession;
 use crate::models::error::VirtManagerError;
@@ -317,6 +319,182 @@ impl LibvirtConnection {
         })
     }
 
+    // -- Storage Management --
+
+    /// List all storage pools on the hypervisor.
+    pub fn list_storage_pools(&self) -> Result<Vec<crate::models::storage::StoragePoolInfo>, VirtManagerError> {
+        self.with_connection(|conn| {
+            let pools = conn.list_all_storage_pools(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "listStoragePools".into(),
+                reason: e.to_string(),
+            })?;
+            let mut results = Vec::with_capacity(pools.len());
+            for pool in &pools {
+                if let Some(info) = Self::parse_storage_pool(pool) {
+                    results.push(info);
+                }
+            }
+            Ok(results)
+        })
+    }
+
+    pub fn get_pool_xml(&self, name: &str) -> Result<String, VirtManagerError> {
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupPool".into(),
+                    reason: format!("pool '{name}' not found"),
+                }
+            })?;
+            pool.get_xml_desc(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getPoolXML".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    pub fn get_pool_config(&self, name: &str) -> Result<crate::libvirt::storage_config::PoolConfig, VirtManagerError> {
+        let xml = self.get_pool_xml(name)?;
+        crate::libvirt::storage_config::parse_pool(&xml)
+    }
+
+    pub fn start_pool(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_pool(name, "startPool", |p| p.create(0).map(|_| ()))
+    }
+
+    pub fn stop_pool(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_pool(name, "stopPool", |p| p.destroy())
+    }
+
+    pub fn refresh_pool(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_pool(name, "refreshPool", |p| p.refresh(0).map(|_| ()))
+    }
+
+    pub fn set_pool_autostart(&self, name: &str, autostart: bool) -> Result<(), VirtManagerError> {
+        self.with_pool(name, "setPoolAutostart", move |p| {
+            p.set_autostart(autostart).map(|_| ())
+        })
+    }
+
+    /// Define a pool from XML. Optionally builds the target directory and starts it.
+    pub fn define_pool(&self, xml: &str, build: bool, start: bool) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let pool = StoragePool::define_xml(conn, xml, 0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "definePool".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            if build {
+                // Build may fail if already exists; that's OK
+                let _ = pool.build(0);
+            }
+            if start {
+                pool.create(0).map(|_| ()).map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "startPool".into(),
+                    reason: e.to_string(),
+                })?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Undefine a pool. Stops it first if active.
+    pub fn delete_pool(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupPool".into(),
+                    reason: format!("pool '{name}' not found"),
+                }
+            })?;
+            if pool.is_active().unwrap_or(false) {
+                let _ = pool.destroy();
+            }
+            pool.undefine().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "undefinePool".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// List volumes in a pool.
+    pub fn list_volumes(&self, pool_name: &str) -> Result<Vec<crate::models::storage::StorageVolumeInfo>, VirtManagerError> {
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, pool_name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupPool".into(),
+                    reason: format!("pool '{pool_name}' not found"),
+                }
+            })?;
+            let vols = pool.list_all_volumes(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "listVolumes".into(),
+                reason: e.to_string(),
+            })?;
+            let mut results = Vec::with_capacity(vols.len());
+            for vol in &vols {
+                if let Some(info) = Self::parse_storage_volume(vol, pool_name) {
+                    results.push(info);
+                }
+            }
+            Ok(results)
+        })
+    }
+
+    /// Create a volume from XML inside a pool.
+    pub fn create_volume(&self, pool_name: &str, xml: &str) -> Result<String, VirtManagerError> {
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, pool_name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupPool".into(),
+                    reason: format!("pool '{pool_name}' not found"),
+                }
+            })?;
+            let vol = StorageVol::create_xml(&pool, xml, 0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "createVolume".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            vol.get_path().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getVolumePath".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Delete a volume by its path.
+    pub fn delete_volume(&self, path: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let vol = StorageVol::lookup_by_path(conn, path).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupVolume".into(),
+                    reason: format!("volume '{path}' not found"),
+                }
+            })?;
+            vol.delete(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "deleteVolume".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Resize a volume to the given capacity in bytes.
+    pub fn resize_volume(&self, path: &str, capacity_bytes: u64) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let vol = StorageVol::lookup_by_path(conn, path).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupVolume".into(),
+                    reason: format!("volume '{path}' not found"),
+                }
+            })?;
+            vol.resize(capacity_bytes, 0).map(|_| ()).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "resizeVolume".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     // -- Private helpers --
 
     fn with_connection<F, T>(&self, f: F) -> Result<T, VirtManagerError>
@@ -442,6 +620,112 @@ impl LibvirtConnection {
             ipv6_summary,
         })
     }
+
+    fn with_pool<F>(&self, name: &str, op_name: &str, op: F) -> Result<(), VirtManagerError>
+    where
+        F: FnOnce(&StoragePool) -> Result<(), virt::error::Error>,
+    {
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupPool".into(),
+                    reason: format!("pool '{name}' not found"),
+                }
+            })?;
+            op(&pool).map_err(|e| VirtManagerError::OperationFailed {
+                operation: op_name.to_string(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Parse a virt::StoragePool into our summary info.
+    fn parse_storage_pool(pool: &StoragePool) -> Option<crate::models::storage::StoragePoolInfo> {
+        let name = pool.get_name().ok()?;
+        let uuid = pool.get_uuid_string().ok()?;
+        let is_active = pool.is_active().unwrap_or(false);
+        let is_persistent = pool.is_persistent().unwrap_or(false);
+        let autostart = pool.get_autostart().unwrap_or(false);
+        let num_volumes = pool.num_of_volumes().unwrap_or(0);
+
+        let mut pool_type = "unknown".to_string();
+        let mut capacity = 0u64;
+        let mut allocation = 0u64;
+        let mut available = 0u64;
+        let mut target_path = None;
+
+        if let Ok(info) = pool.get_info() {
+            capacity = info.capacity;
+            allocation = info.allocation;
+            available = info.available;
+        }
+        if let Ok(xml) = pool.get_xml_desc(0) {
+            if let Ok(cfg) = crate::libvirt::storage_config::parse_pool(&xml) {
+                if !cfg.pool_type.is_empty() {
+                    pool_type = cfg.pool_type;
+                }
+                target_path = cfg.target_path;
+            }
+        }
+
+        Some(crate::models::storage::StoragePoolInfo {
+            name,
+            uuid,
+            pool_type,
+            is_active,
+            is_persistent,
+            autostart,
+            capacity,
+            allocation,
+            available,
+            target_path,
+            num_volumes,
+        })
+    }
+
+    fn parse_storage_volume(
+        vol: &StorageVol,
+        pool_name: &str,
+    ) -> Option<crate::models::storage::StorageVolumeInfo> {
+        let name = vol.get_name().ok()?;
+        let path = vol.get_path().ok().unwrap_or_default();
+        let key = vol.get_key().ok().unwrap_or_default();
+
+        let mut capacity = 0u64;
+        let mut allocation = 0u64;
+        if let Ok(info) = vol.get_info() {
+            capacity = info.capacity;
+            allocation = info.allocation;
+        }
+
+        let mut format = String::new();
+        if let Ok(xml) = vol.get_xml_desc(0) {
+            if let Ok(cfg) = crate::libvirt::storage_config::parse_volume(&xml) {
+                format = cfg.format;
+            }
+        }
+        // Fallback: detect format from extension
+        if format.is_empty() {
+            if name.ends_with(".qcow2") {
+                format = "qcow2".into();
+            } else if name.ends_with(".iso") {
+                format = "iso".into();
+            } else {
+                format = "raw".into();
+            }
+        }
+
+        Some(crate::models::storage::StorageVolumeInfo {
+            name,
+            path,
+            key,
+            capacity,
+            allocation,
+            format,
+            pool_name: pool_name.to_string(),
+        })
+    }
+
 }
 /// VIR_DOMAIN_AFFECT_LIVE=1, VIR_DOMAIN_AFFECT_CONFIG=2
 fn domain_modify_flags(live: bool, config: bool) -> u32 {
