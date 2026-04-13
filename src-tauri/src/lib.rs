@@ -32,6 +32,9 @@ pub fn run() {
             domain::resume_domain,
             domain::reboot_domain,
             domain::get_domain_xml,
+            domain::get_domain_config,
+            domain::set_vcpus,
+            domain::set_memory_mb,
             // Console
             console::open_console,
             console::console_send,

@@ -145,6 +145,59 @@ impl LibvirtConnection {
         }
     }
 
+
+    /// Set vCPU count for a domain. `live` affects running VM, `config` persists.
+    pub fn set_vcpus(
+        &self,
+        name: &str,
+        count: u32,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .set_vcpus_flags(count, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "setVcpus".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Set memory for a domain in KiB. `live` affects running VM, `config` persists.
+    pub fn set_memory(
+        &self,
+        name: &str,
+        memory_kib: u64,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .set_memory_flags(memory_kib, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "setMemory".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Get parsed domain configuration.
+    pub fn get_domain_config(
+        &self,
+        name: &str,
+        inactive: bool,
+    ) -> Result<crate::libvirt::domain_config::DomainConfig, VirtManagerError> {
+        let xml = self.get_domain_xml(name, inactive)?;
+        crate::libvirt::domain_config::parse(&xml)
+    }
+
     // -- Private helpers --
 
     fn with_connection<F, T>(&self, f: F) -> Result<T, VirtManagerError>
@@ -209,6 +262,16 @@ impl LibvirtConnection {
             has_serial,
         })
     }
+}
+
+
+/// VIR_DOMAIN_AFFECT_LIVE=1, VIR_DOMAIN_AFFECT_CONFIG=2
+fn domain_modify_flags(live: bool, config: bool) -> u32 {
+    let mut flags: u32 = 0;
+    if live { flags |= 1; }
+    if config { flags |= 2; }
+    if flags == 0 { flags = 2; }  // default to config
+    flags
 }
 
 impl Default for LibvirtConnection {

@@ -261,3 +261,46 @@ fn test_console_send_after_close_fails() {
     let result = session.send(b"test");
     assert!(result.is_err(), "Send after close should fail");
 }
+
+// ─── Domain config parsing tests ───
+
+#[test]
+fn test_parse_fedora_workstation_config() {
+    let conn = connect_testhost();
+    let cfg = conn
+        .get_domain_config(TEST_VM, false)
+        .expect("Should parse domain config");
+
+    assert_eq!(cfg.name, TEST_VM);
+    assert!(!cfg.uuid.is_empty());
+    assert!(cfg.memory.kib > 0, "Memory should be populated");
+    assert!(cfg.vcpus.max > 0, "vCPUs should be populated");
+    assert!(
+        !cfg.os.arch.as_deref().unwrap_or("").is_empty(),
+        "Architecture should be set"
+    );
+
+    println!(
+        "  Parsed: name={}, mem={}MiB, vcpus={}, cpu_mode={}, machine={:?}, firmware={}",
+        cfg.name,
+        cfg.memory.mb(),
+        cfg.vcpus.max,
+        cfg.cpu.mode,
+        cfg.os.machine,
+        cfg.os.firmware,
+    );
+}
+
+#[test]
+fn test_parse_all_vms_succeeds() {
+    let conn = connect_testhost();
+    let domains = conn.list_all_domains().unwrap();
+
+    for vm in &domains {
+        let cfg = conn
+            .get_domain_config(&vm.name, false)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {:?}", vm.name, e));
+        assert_eq!(cfg.name, vm.name);
+        assert!(!cfg.uuid.is_empty());
+    }
+}

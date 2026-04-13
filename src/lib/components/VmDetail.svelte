@@ -1,6 +1,7 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
+  import VmConfigPanel from "./VmConfigPanel.svelte";
 
   const appState = getState();
 
@@ -8,6 +9,7 @@
   let showXml = $state(false);
   let loadingXml = $state(false);
   let showConsole = $state(false);
+  let activeTab = $state("overview"); // "overview" | "config"
 
   const stateColors = {
     running: "#34d399",
@@ -121,15 +123,26 @@
       </div>
     </div>
 
-    <div class="vm-xml-section">
-      <div class="xml-header">
-        <h3>Domain XML</h3>
-        <button class="btn-small" onclick={loadXml} disabled={loadingXml}>
-          {loadingXml ? "Loading..." : showXml ? "Refresh" : "Show XML"}
-        </button>
-      </div>
-      {#if showXml && domainXml}
-        <pre class="xml-content">{domainXml}</pre>
+    <div class="tab-bar">
+      <button class="tab" class:active={activeTab === "overview"} onclick={() => activeTab = "overview"}>Overview</button>
+      <button class="tab" class:active={activeTab === "config"} onclick={() => activeTab = "config"}>Configuration</button>
+      <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
+    </div>
+
+    <div class="tab-content">
+      {#if activeTab === "config"}
+        <VmConfigPanel vmName={vm.name} />
+      {:else if activeTab === "xml"}
+        <div class="vm-xml-section">
+          <div class="xml-header">
+            <button class="btn-small" onclick={loadXml} disabled={loadingXml}>
+              {loadingXml ? "Loading..." : domainXml ? "Refresh" : "Load XML"}
+            </button>
+          </div>
+          {#if domainXml}
+            <pre class="xml-content">{domainXml}</pre>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}
@@ -265,6 +278,38 @@
   .btn-action.danger:hover { background: #991b1b; }
   .btn-action.console { background: #1e3a5f; color: #93c5fd; border-color: #1e3a5f; }
   .btn-action.console:hover { background: #1e40af; }
+
+
+  .tab-bar {
+    display: flex;
+    gap: 2px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+
+  .tab {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+
+  .tab:hover { color: var(--text); }
+
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content {
+    padding: 0 24px 24px;
+  }
 
   .vm-xml-section {
     padding: 0 24px 24px;

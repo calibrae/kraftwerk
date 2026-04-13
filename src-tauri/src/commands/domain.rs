@@ -55,3 +55,37 @@ pub fn get_domain_xml(
 ) -> Result<String, VirtManagerError> {
     state.libvirt().get_domain_xml(&name, inactive)
 }
+
+/// Get parsed domain configuration for a VM.
+#[tauri::command]
+pub fn get_domain_config(
+    state: State<'_, AppState>,
+    name: String,
+    inactive: bool,
+) -> Result<crate::libvirt::domain_config::DomainConfig, VirtManagerError> {
+    state.libvirt().get_domain_config(&name, inactive)
+}
+
+/// Set the vCPU count for a VM. `live=true` affects running VM, `config=true` persists.
+#[tauri::command]
+pub fn set_vcpus(
+    state: State<'_, AppState>,
+    name: String,
+    count: u32,
+    live: bool,
+    config: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_vcpus(&name, count, live, config)
+}
+
+/// Set memory (in MiB) for a VM.
+#[tauri::command]
+pub fn set_memory_mb(
+    state: State<'_, AppState>,
+    name: String,
+    memory_mb: u64,
+    live: bool,
+    config: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_memory(&name, memory_mb * 1024, live, config)
+}
