@@ -8,6 +8,7 @@
   import StorageView from "$lib/components/StorageView.svelte";
   import CreatePoolDialog from "$lib/components/CreatePoolDialog.svelte";
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
+  import VmWizard from "$lib/components/VmWizard.svelte";
   import { loadConnections, addConnection, connect, getState, clearError } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
@@ -15,6 +16,7 @@
   let showNetworkDialog = $state(false);
   let showPoolDialog = $state(false);
   let showVolumeDialog = $state(false);
+  let showVmWizard = $state(false);
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
@@ -44,6 +46,7 @@
         <button class="view-tab" class:active={view === "vms"} onclick={() => view = "vms"}>
           Virtual Machines <span class="count">{appState.vms.length}</span>
         </button>
+        <button class="view-tab new-btn" onclick={() => showVmWizard = true} title="Create new VM">+ New VM</button>
         <button class="view-tab" class:active={view === "networks"} onclick={() => view = "networks"}>
           Networks <span class="count">{appState.networks.length}</span>
         </button>
@@ -72,6 +75,7 @@
 <CreateNetworkDialog bind:open={showNetworkDialog} />
 <CreatePoolDialog bind:open={showPoolDialog} />
 <CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />
+<VmWizard bind:open={showVmWizard} />
 
 {#if appState.error}
   <div class="toast-error">
@@ -158,6 +162,13 @@
     background: var(--accent-dim);
     color: var(--text);
   }
+
+  .view-tab.new-btn {
+    margin-left: auto;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .view-tab.new-btn:hover { color: var(--text); background: var(--accent-dim); border-radius: 6px; margin-bottom: 2px; border-bottom-color: transparent; }
 
   .view-content {
     flex: 1;

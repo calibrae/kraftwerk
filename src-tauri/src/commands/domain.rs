@@ -89,3 +89,10 @@ pub fn set_memory_mb(
 ) -> Result<(), VirtManagerError> {
     state.libvirt().set_memory(&name, memory_mb * 1024, live, config)
 }
+
+
+/// Remove a VM's persistent configuration. VM must be shut off.
+#[tauri::command]
+pub fn undefine_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
+    state.libvirt().undefine_domain(&name)
+}

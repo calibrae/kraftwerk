@@ -117,6 +117,22 @@ impl LibvirtConnection {
         self.with_domain(name, "reboot", |d| d.reboot(0).map(|_| ()))
     }
 
+
+    /// Define a new domain (persistent). Does not start it.
+    pub fn define_domain_xml(&self, xml: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            Domain::define_xml(conn, xml).map(|_| ()).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "defineDomainXML".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Undefine a persistent domain configuration. VM must be shut off.
+    pub fn undefine_domain(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_domain(name, "undefineDomain", |d| d.undefine().map(|_| ()))
+    }
+
     /// Get the XML description for a domain.
     pub fn get_domain_xml(&self, name: &str, inactive: bool) -> Result<String, VirtManagerError> {
         self.with_connection(|conn| {

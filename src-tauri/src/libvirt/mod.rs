@@ -1,6 +1,7 @@
 pub mod connection;
 pub mod console;
 pub mod domain_config;
+pub mod domain_builder;
 pub mod network_config;
 pub mod storage_config;
 pub mod xml_helpers;

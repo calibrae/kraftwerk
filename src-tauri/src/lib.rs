@@ -8,6 +8,7 @@ use commands::connection;
 use commands::console;
 use commands::domain;
 use commands::network;
+use commands::vm_creation;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,6 +67,10 @@ pub fn run() {
             storage::create_volume,
             storage::delete_volume,
             storage::resize_volume,
+            // VM creation
+            vm_creation::list_os_variants,
+            vm_creation::create_vm,
+            domain::undefine_domain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

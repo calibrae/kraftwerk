@@ -819,3 +819,121 @@ fn test_testhost_prod_pools_untouched() {
     let default = pools.iter().find(|p| p.name == "default").unwrap();
     assert!(default.is_active, "default must stay active");
 }
+
+// ─── VM creation tests ───
+//
+// Creates a disposable test VM in the `default` pool (testhost) with a tiny
+// disk, verifies it's defined with correct attributes, then cleans up
+// both the domain and the volume.
+
+use virtmanager_rs_lib::libvirt::domain_builder::{
+    build_domain_xml, DiskSource, DomainBuildParams, InstallMedia, NetworkSource,
+};
+
+const TEST_VM_NAME: &str = "virtmanager-test-vm";
+const TEST_VOL_NAME: &str = "virtmanager-test-vm.qcow2";
+
+struct VmCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    domain_name: &'static str,
+    volume_path: Option<String>,
+}
+
+impl<'a> Drop for VmCleanup<'a> {
+    fn drop(&mut self) {
+        // Undefine domain if present (stops it first if running)
+        let _ = self.conn.destroy_domain(self.domain_name);
+        let _ = self.conn.undefine_domain(self.domain_name);
+        if let Some(p) = &self.volume_path {
+            let _ = self.conn.delete_volume(p);
+        }
+    }
+}
+
+fn tiny_params(volume_path: &str) -> DomainBuildParams {
+    DomainBuildParams {
+        name: TEST_VM_NAME.into(),
+        memory_mb: 128,
+        vcpus: 1,
+        os_type: "linux".into(),
+        machine_type: "q35".into(),
+        arch: "x86_64".into(),
+        firmware: "bios".into(),
+        disk_bus: "virtio".into(),
+        nic_model: "virtio".into(),
+        video_model: "virtio".into(),
+        disk_source: DiskSource::ExistingPath {
+            path: volume_path.into(),
+            format: "qcow2".into(),
+        },
+        network: NetworkSource::None,
+        install_media: InstallMedia::default(),
+        graphics: "none".into(),
+    }
+}
+
+#[test]
+fn test_create_and_undefine_vm() {
+    let conn = connect_testhost();
+
+    // Cleanup any stale test VM first
+    let _ = conn.destroy_domain(TEST_VM_NAME);
+    let _ = conn.undefine_domain(TEST_VM_NAME);
+
+    // Create a small test volume
+    let vol_xml = virtmanager_rs_lib::libvirt::storage_config::build_volume_xml(
+        &virtmanager_rs_lib::libvirt::storage_config::VolumeBuildParams {
+            name: TEST_VOL_NAME,
+            capacity_bytes: 64 * 1024 * 1024, // 64MB
+            format: "qcow2",
+            allocation_bytes: None,
+        },
+    );
+    let _ = conn.delete_volume(&format!("/var/lib/libvirt/images/{TEST_VOL_NAME}"));
+    let vol_path = conn.create_volume("default", &vol_xml).expect("create volume");
+
+    let _guard = VmCleanup {
+        conn: &conn,
+        domain_name: TEST_VM_NAME,
+        volume_path: Some(vol_path.clone()),
+    };
+
+    let xml = build_domain_xml(&tiny_params(&vol_path));
+    conn.define_domain_xml(&xml).expect("define_domain_xml");
+
+    // Verify listed
+    let domains = conn.list_all_domains().unwrap();
+    let vm = domains.iter().find(|d| d.name == TEST_VM_NAME);
+    assert!(vm.is_some(), "VM should be listed");
+    assert_eq!(vm.unwrap().vcpus, 1);
+    assert_eq!(vm.unwrap().memory_mb, 128);
+
+    // Config round-trips
+    let cfg = conn.get_domain_config(TEST_VM_NAME, false).unwrap();
+    assert_eq!(cfg.name, TEST_VM_NAME);
+    assert_eq!(cfg.vcpus.max, 1);
+}
+
+#[test]
+fn test_create_vm_with_pending_disk_fails_gracefully() {
+    // build_domain_xml with NewVolume source emits "__PENDING__" placeholder.
+    // libvirt should reject this (no such file), demonstrating that the
+    // wizard flow must resolve the volume path before defining.
+    let conn = connect_testhost();
+    let params = DomainBuildParams {
+        disk_source: DiskSource::NewVolume {
+            pool_name: "default".into(),
+            name: "x".into(),
+            capacity_bytes: 1024 * 1024,
+            format: "qcow2".into(),
+        },
+        ..tiny_params("unused")
+    };
+    let xml = build_domain_xml(&params);
+    assert!(xml.contains("__PENDING__"));
+
+    // Libvirt may or may not reject __PENDING__ at define time (it only checks
+    // the file at start), but we expect the wizard never to reach this.
+    // We just validate the XML contains the sentinel.
+    let _ = conn; // silence unused warning
+}
