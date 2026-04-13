@@ -147,6 +147,22 @@ impl LibvirtConnection {
         })
     }
 
+
+    /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
+    /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
+    /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.
+    pub fn open_graphics_fd(&self, domain_name: &str) -> Result<i32, VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, domain_name)?;
+            // VIR_DOMAIN_OPEN_GRAPHICS_SKIPAUTH = 1 (skip auth since tunneled over SSH)
+            let fd = domain.open_graphics_fd(0, 1).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "openGraphicsFD".into(),
+                reason: e.to_string(),
+            })?;
+            Ok(fd as i32)
+        })
+    }
+
     /// Open a console session for a domain. The on_data callback receives
     /// bytes from the VM's serial console on a background thread.
     pub fn with_console<F>(

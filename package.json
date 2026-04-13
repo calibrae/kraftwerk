@@ -13,6 +13,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@novnc/novnc": "^1.6.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "crytter-wasm": "file:../crytter/pkg-full",

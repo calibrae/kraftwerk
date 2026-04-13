@@ -4,6 +4,7 @@ pub mod domain_config;
 pub mod domain_builder;
 pub mod network_config;
 pub mod storage_config;
+pub mod vnc_proxy;
 pub mod xml_helpers;
 
 #[cfg(test)]

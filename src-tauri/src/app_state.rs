@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::libvirt::connection::LibvirtConnection;
 use crate::libvirt::console::ConsoleSession;
+use crate::libvirt::vnc_proxy::VncSession;
 use crate::models::connection::SavedConnection;
 use crate::models::error::VirtManagerError;
 use crate::models::state::ConnectionState;
@@ -17,6 +18,9 @@ pub struct AppState {
     saved_connections: Mutex<Vec<SavedConnection>>,
     connection_states: Mutex<HashMap<Uuid, ConnectionState>>,
     console: Mutex<Option<ConsoleSession>>,
+    vnc: Mutex<Option<VncSession>>,
+    runtime: tokio::runtime::Runtime,
+    current_uri: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -26,6 +30,14 @@ impl AppState {
             saved_connections: Mutex::new(Vec::new()),
             connection_states: Mutex::new(HashMap::new()),
             console: Mutex::new(None),
+            vnc: Mutex::new(None),
+            current_uri: Mutex::new(None),
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .thread_name("virtmanager-net")
+                .build()
+                .expect("tokio runtime"),
         }
     }
 
@@ -138,6 +150,39 @@ impl AppState {
     pub fn close_console(&self) {
         let mut guard = self.console.lock().unwrap();
         if let Some(mut session) = guard.take() {
+            session.close();
+        }
+    }
+
+
+
+    pub fn set_current_uri(&self, uri: String) {
+        *self.current_uri.lock().unwrap() = Some(uri);
+    }
+
+    pub fn clear_current_uri(&self) {
+        *self.current_uri.lock().unwrap() = None;
+    }
+
+    pub fn current_uri(&self) -> Option<String> {
+        self.current_uri.lock().unwrap().clone()
+    }
+
+    pub fn runtime_handle(&self) -> &tokio::runtime::Handle {
+        self.runtime.handle()
+    }
+
+    pub fn set_vnc(&self, session: VncSession) {
+        let mut guard = self.vnc.lock().unwrap();
+        if let Some(old) = guard.take() {
+            old.close();
+        }
+        *guard = Some(session);
+    }
+
+    pub fn close_vnc(&self) {
+        let mut guard = self.vnc.lock().unwrap();
+        if let Some(session) = guard.take() {
             session.close();
         }
     }

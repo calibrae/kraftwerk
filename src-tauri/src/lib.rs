@@ -9,6 +9,7 @@ use commands::console;
 use commands::domain;
 use commands::network;
 use commands::vm_creation;
+use commands::vnc;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +72,9 @@ pub fn run() {
             vm_creation::list_os_variants,
             vm_creation::create_vm,
             domain::undefine_domain,
+            // VNC
+            vnc::open_vnc,
+            vnc::close_vnc,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

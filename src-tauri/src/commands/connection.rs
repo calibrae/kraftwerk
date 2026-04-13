@@ -57,6 +57,7 @@ pub fn connect(
 
     match state.libvirt().open(&conn.uri) {
         Ok(()) => {
+            state.set_current_uri(conn.uri.clone());
             state.set_connection_state(&uuid, ConnectionState::Connected);
             // Update last connected timestamp
             let now = SystemTime::now()
@@ -85,6 +86,7 @@ pub fn disconnect(
     })?;
     state.set_connection_state(&uuid, ConnectionState::Disconnecting);
     state.libvirt().close();
+    state.clear_current_uri();
     state.set_connection_state(&uuid, ConnectionState::Disconnected);
     Ok(())
 }

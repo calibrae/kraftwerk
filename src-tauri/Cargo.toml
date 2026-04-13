@@ -26,7 +26,9 @@ keyring = { version = "3", features = ["apple-native", "linux-native"] }
 quick-xml = "0.37"
 regex = "1"
 libc = "0.2"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "net", "rt-multi-thread", "io-util", "macros"] }
+tokio-tungstenite = "0.27"
+futures-util = "0.3"
 
 [dev-dependencies]
 mockall = "0.13"

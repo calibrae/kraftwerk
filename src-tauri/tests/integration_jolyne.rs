@@ -937,3 +937,84 @@ fn test_create_vm_with_pending_disk_fails_gracefully() {
     // We just validate the XML contains the sentinel.
     let _ = conn; // silence unused warning
 }
+
+
+// ─── VNC SSH tunnel tests ───
+
+use virtmanager_rs_lib::libvirt::vnc_proxy::{parse_ssh_target, parse_vnc_endpoint, VncSession};
+
+#[test]
+fn test_parse_vnc_endpoint_from_example-firewall_xml() {
+    let conn = connect_testhost();
+    let xml = conn.get_domain_xml("example-firewall", false).unwrap();
+    let ep = parse_vnc_endpoint(&xml);
+    assert!(ep.is_some(), "example-firewall should have a VNC port assigned");
+    let (host, port) = ep.unwrap();
+    println!("example-firewall VNC: {host}:{port}");
+    assert!(port > 0);
+}
+
+#[test]
+fn test_parse_testhost_ssh_target() {
+    assert_eq!(
+        parse_ssh_target(JOLYNE_URI),
+        Some("testuser@testhost".into()),
+    );
+}
+
+#[test]
+fn test_vnc_session_ssh_tunnel_to_example-firewall() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let conn = connect_testhost();
+    let xml = conn.get_domain_xml("example-firewall", false).unwrap();
+    let (listen, port) = parse_vnc_endpoint(&xml).expect("VNC port");
+    let target = parse_ssh_target(JOLYNE_URI).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let session = VncSession::start(&target, &listen, port, runtime.handle())
+        .expect("start VNC session");
+
+    // Connect as a WS client, read the RFB banner back via the tunnel.
+    let handle = std::thread::spawn({
+        let ws_port = session.port;
+        move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                use futures_util::StreamExt;
+                use tokio_tungstenite::tungstenite::Message;
+                let url = format!("ws://127.0.0.1:{ws_port}");
+                let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+                // First message should carry the RFB banner.
+                let msg: Option<Result<Message, _>> = ws.next().await;
+                let msg = msg.expect("ws closed too early").unwrap();
+                let bytes = match msg {
+                    Message::Binary(b) => b.to_vec(),
+                    other => panic!("expected binary, got {other:?}"),
+                };
+                let text = String::from_utf8_lossy(&bytes);
+                println!("tunnel banner: {text:?}");
+                assert!(
+                    text.starts_with("RFB "),
+                    "expected RFB banner through tunnel, got {text:?}"
+                );
+            });
+        }
+    });
+
+    handle.join().unwrap();
+    session.close();
+    let _ = TcpStream::connect_timeout(
+        &"127.0.0.1:1".parse().unwrap(),
+        Duration::from_millis(10),
+    ); // no-op to silence unused Read/Write imports
+}
