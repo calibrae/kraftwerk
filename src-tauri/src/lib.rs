@@ -21,6 +21,7 @@ use commands::virtio as cmd_virtio;
 use commands::char_devices as cmd_char_devices;
 use commands::filesystem as cmd_filesystem;
 use commands::controllers as cmd_controllers;
+use commands::cpu_tune as cmd_cpu_tune;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -140,6 +141,10 @@ pub fn run() {
             cmd_controllers::add_controller,
             cmd_controllers::remove_controller,
             cmd_controllers::update_controller,
+            cmd_cpu_tune::get_cpu_tune,
+            cmd_cpu_tune::apply_cpu_tune,
+            cmd_cpu_tune::set_vcpu_count,
+            cmd_cpu_tune::set_iothread_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

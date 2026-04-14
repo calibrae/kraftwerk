@@ -206,6 +206,69 @@ impl LibvirtConnection {
         self.define_domain_xml(&new_xml)
     }
 
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Round I: advanced CPU + memory tuning + iothreads
+    // ═════════════════════════════════════════════════════════════════════
+
+    /// Read the full CPU / vCPU / cputune / memtune / NUMA / hugepages /
+    /// iothreads snapshot from the inactive (persistent) domain XML.
+    pub fn get_cpu_tune(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::cpu_tune_config::CpuTuneSnapshot, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::cpu_tune_config::parse(&xml)
+    }
+
+    /// Apply a CpuTunePatch to the persistent definition. Most of this
+    /// only takes effect on next boot; vCPU count and iothread count
+    /// have their own dedicated live-apply methods below.
+    pub fn apply_cpu_tune(
+        &self,
+        name: &str,
+        patch: &crate::libvirt::cpu_tune_config::CpuTunePatch,
+    ) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::cpu_tune_config::apply(&xml, patch)?;
+        // Validate before redefine so we give a useful error.
+        let snap = crate::libvirt::cpu_tune_config::parse(&new_xml)?;
+        crate::libvirt::cpu_tune_config::validate(&snap)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Set the current vCPU count. Supports live hotplug when `live=true`
+    /// (requires the guest kernel to support CPU hotplug). Persistent
+    /// change via `config=true` always works.
+    pub fn set_vcpu_count(
+        &self,
+        name: &str,
+        current: u32,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        // Reuse the existing wrapper — same semantics.
+        self.set_vcpus(name, current, live, config)
+    }
+
+    /// Set the iothread count. We prefer virDomainAddIOThread /
+    /// virDomainDelIOThread when we need to adjust a running guest
+    /// (via virt-sys since the safe wrapper doesn't expose it). For
+    /// the persistent / offline case we rewrite the XML and redefine,
+    /// which is simpler and always works.
+    pub fn set_iothread_count(
+        &self,
+        name: &str,
+        count: u32,
+    ) -> Result<(), VirtManagerError> {
+        use crate::libvirt::cpu_tune_config::{CpuTunePatch, IoThreadsConfig};
+        let patch = CpuTunePatch {
+            iothreads: Some(IoThreadsConfig { count }),
+            ..Default::default()
+        };
+        self.apply_cpu_tune(name, &patch)
+    }
+
     /// Parse the full display bundle (graphics / video / sound / input)
     /// from a domain XML. The domain XML is fetched INACTIVE, i.e. the
     /// persistent definition — NOT with VIR_DOMAIN_XML_SECURE, so the

@@ -11,6 +11,7 @@
   import CharDevicesPanel from "./CharDevicesPanel.svelte";
   import FilesystemPanel from "./FilesystemPanel.svelte";
   import ControllersPanel from "./ControllersPanel.svelte";
+  import CpuTunePanel from "./CpuTunePanel.svelte";
   import VmOverview from "./VmOverview.svelte";
 
   const appState = getState();
@@ -183,6 +184,7 @@
       <button class="tab" class:active={activeTab === "comms"} onclick={() => activeTab = "comms"}>Communication</button>
       <button class="tab" class:active={activeTab === "filesystems"} onclick={() => activeTab = "filesystems"}>Filesystems</button>
       <button class="tab" class:active={activeTab === "controllers"} onclick={() => activeTab = "controllers"}>Controllers</button>
+      <button class="tab" class:active={activeTab === "tuning"} onclick={() => activeTab = "tuning"}>Tuning</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
@@ -209,6 +211,8 @@
         <FilesystemPanel vmName={vm.name} />
       {:else if activeTab === "controllers"}
         <ControllersPanel vmName={vm.name} />
+      {:else if activeTab === "tuning"}
+        <CpuTunePanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <div class="vm-xml-section">
           <div class="xml-header">

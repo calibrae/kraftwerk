@@ -11,6 +11,7 @@ pub mod virtio_devices;
 pub mod char_devices;
 pub mod filesystem_config;
 pub mod controller_config;
+pub mod cpu_tune_config;
 pub mod domain_builder;
 pub mod network_config;
 pub mod nic_config;

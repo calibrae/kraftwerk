@@ -16,3 +16,4 @@ pub mod filesystem;
 pub mod controllers;
 pub mod storage;
 pub mod nics;
+pub mod cpu_tune;
