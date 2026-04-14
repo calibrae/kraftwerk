@@ -14,6 +14,7 @@ use commands::spice;
 use commands::hostdev;
 use commands::domain_caps as cmd_domain_caps;
 use commands::boot as cmd_boot;
+use commands::nics as cmd_nics;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +94,10 @@ pub fn run() {
             cmd_domain_caps::get_domain_capabilities,
             cmd_boot::get_boot_config,
             cmd_boot::apply_boot_patch,
+            cmd_nics::list_domain_nics,
+            cmd_nics::add_domain_nic,
+            cmd_nics::remove_domain_nic,
+            cmd_nics::update_domain_nic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

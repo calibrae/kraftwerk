@@ -346,6 +346,88 @@ impl LibvirtConnection {
         })
     }
 
+    /// Generic update_device wrapper. Used for live-editing devices that
+    /// libvirt supports in-place updates for (CD-ROM media, NIC link
+    /// state, etc). Unlike attach/detach, this mutates the existing
+    /// device identified by a stable key in the XML (MAC for NICs,
+    /// target dev for disks).
+    fn update_device(&self, name: &str, xml: &str, live: bool, config: bool) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .update_device_flags(xml, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "updateDevice".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    // -- NIC management (Round C) --
+
+    /// List every `<interface>` attached to the domain, in document order.
+    pub fn list_domain_nics(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::nic_config::NicConfig>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, false)?;
+        crate::libvirt::nic_config::parse_nics(&xml)
+    }
+
+    /// Hot-add or persistent-add a NIC to a domain.
+    pub fn add_domain_nic(
+        &self,
+        name: &str,
+        nic: &crate::libvirt::nic_config::NicConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        crate::libvirt::nic_config::validate(nic)?;
+        let xml = crate::libvirt::nic_config::build_nic_xml(nic);
+        self.attach_device(name, &xml, live, config)
+    }
+
+    /// Remove the NIC identified by MAC (or target dev, as fallback).
+    /// We look it up in the current domain XML so libvirt gets the
+    /// full original device fragment — detach is picky about that.
+    pub fn remove_domain_nic(
+        &self,
+        name: &str,
+        mac_or_target: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let dom_xml = self.get_domain_xml(name, !live)?;
+        let nics = crate::libvirt::nic_config::parse_nics(&dom_xml)?;
+        let needle = mac_or_target.to_ascii_lowercase();
+        let nic = nics.into_iter().find(|n| {
+            n.mac.as_deref().map(|m| m.to_ascii_lowercase()) == Some(needle.clone())
+                || n.target_dev.as_deref().map(|t| t.to_ascii_lowercase()) == Some(needle.clone())
+        }).ok_or_else(|| VirtManagerError::OperationFailed {
+            operation: "removeDomainNic".into(),
+            reason: format!("no interface matching '{mac_or_target}' on {name}"),
+        })?;
+        let xml = crate::libvirt::nic_config::build_nic_xml(&nic);
+        self.detach_device(name, &xml, live, config)
+    }
+
+    /// Update an existing NIC in place (e.g. link state flip). The NIC's
+    /// MAC address in `nic.mac` is the key libvirt uses to find the
+    /// existing device; callers must preserve it across updates.
+    pub fn update_domain_nic(
+        &self,
+        name: &str,
+        nic: &crate::libvirt::nic_config::NicConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        crate::libvirt::nic_config::validate(nic)?;
+        let xml = crate::libvirt::nic_config::build_nic_xml(nic);
+        self.update_device(name, &xml, live, config)
+    }
+
     /// Open a console session for a domain. The on_data callback receives
     /// bytes from the VM's serial console on a background thread.
     pub fn with_console<F>(
