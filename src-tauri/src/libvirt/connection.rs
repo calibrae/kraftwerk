@@ -346,6 +346,80 @@ impl LibvirtConnection {
         })
     }
 
+    /// Generic update_device wrapper. Used for CD-ROM media change.
+    fn update_device(&self, name: &str, xml: &str, live: bool, config: bool) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .update_device_flags(xml, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "updateDevice".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Parse the disks attached to a domain from its inactive XML.
+    pub fn list_domain_disks(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::disk_config::DiskConfig>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::disk_config::parse_disks_full(&xml)
+    }
+
+    /// Attach a new disk to a domain (live and/or persistent).
+    /// Uses virDomainAttachDeviceFlags.
+    pub fn add_domain_disk(
+        &self,
+        name: &str,
+        disk: &crate::libvirt::disk_config::DiskConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        crate::libvirt::disk_config::validate(disk)?;
+        let xml = crate::libvirt::disk_config::build_disk_xml(disk);
+        self.attach_device(name, &xml, live, config)
+    }
+
+    /// Detach a disk from a domain by target dev name.
+    /// Builds a minimal `<disk>` fragment matching the current config so
+    /// libvirt can find the device.
+    pub fn remove_domain_disk(
+        &self,
+        name: &str,
+        target_dev: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let disks = self.list_domain_disks(name)?;
+        let disk = disks
+            .iter()
+            .find(|d| d.target == target_dev)
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "removeDomainDisk".into(),
+                reason: format!("disk with target '{}' not found", target_dev),
+            })?;
+        let xml = crate::libvirt::disk_config::build_disk_xml(disk);
+        self.detach_device(name, &xml, live, config)
+    }
+
+    /// Update a disk in place — used for CD-ROM media change. Matched by
+    /// target dev. Uses virDomainUpdateDeviceFlags.
+    pub fn update_domain_disk(
+        &self,
+        name: &str,
+        disk: &crate::libvirt::disk_config::DiskConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        crate::libvirt::disk_config::validate(disk)?;
+        let xml = crate::libvirt::disk_config::build_disk_xml(disk);
+        self.update_device(name, &xml, live, config)
+    }
+
     /// Open a console session for a domain. The on_data callback receives
     /// bytes from the VM's serial console on a background thread.
     pub fn with_console<F>(

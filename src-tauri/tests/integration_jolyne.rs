@@ -1293,3 +1293,174 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round B: disks ───
+
+#[test]
+fn test_list_disks_on_fedora() {
+    let conn = connect_testhost();
+    let disks = conn.list_domain_disks(TEST_VM).expect("list disks");
+    println!("fedora-workstation disks ({}):", disks.len());
+    for d in &disks {
+        println!("  target={} bus={} device={} driver_type={:?} source={:?}",
+            d.target, d.bus, d.device, d.driver_type, d.source);
+    }
+    // fedora-workstation is known to have at least the root disk.
+    assert!(!disks.is_empty(), "expected at least one disk");
+    // Its root disk is vda on virtio bus per the dumpxml we inspected.
+    assert!(disks.iter().any(|d| d.target == "vda"));
+}
+
+#[test]
+fn test_hotplug_disk_round_trip() {
+    use virtmanager_rs_lib::libvirt::disk_config::{DiskConfig, DiskSource};
+    use virtmanager_rs_lib::libvirt::storage_config::{build_volume_xml, VolumeBuildParams};
+
+    let conn = connect_testhost();
+    // Pick a target name that isn't already taken.
+    let existing = conn.list_domain_disks(TEST_VM).expect("list disks");
+    assert!(!existing.iter().any(|d| d.target == "vdz"),
+        "pre-existing vdz — abort");
+
+    // 1. Create a 64 MiB qcow2 volume in the default pool.
+    const VOL_NAME: &str = "virtmanager-test-hotplug-disk.qcow2";
+    // Clean up any leftover from a prior failed run.
+    if let Ok(vols) = conn.list_volumes("default") {
+        if let Some(v) = vols.iter().find(|v| v.name == VOL_NAME) {
+            let _ = conn.delete_volume(&v.path);
+        }
+    }
+
+    let vol_xml = build_volume_xml(&VolumeBuildParams {
+        name: VOL_NAME,
+        capacity_bytes: 64 * 1024 * 1024,
+        format: "qcow2",
+        allocation_bytes: None,
+    });
+    let path = conn.create_volume("default", &vol_xml).expect("create volume");
+    println!("Created test volume at {}", path);
+
+    // Always clean up, even on panic.
+    let cleanup = |path: &str| {
+        let _ = conn.delete_volume(path);
+    };
+
+    let disk = DiskConfig {
+        device: "disk".into(),
+        bus: "virtio".into(),
+        target: "vdz".into(),
+        source: DiskSource::File { path: path.clone() },
+        driver_name: Some("qemu".into()),
+        driver_type: Some("qcow2".into()),
+        cache: Some("none".into()),
+        ..Default::default()
+    };
+
+    // 2. Attach live + config.
+    let attach_res = conn.add_domain_disk(TEST_VM, &disk, true, true);
+    if let Err(e) = &attach_res {
+        cleanup(&path);
+        panic!("attach failed: {}", e);
+    }
+
+    // 3. Verify it shows up in the list. list_domain_disks reads inactive
+    //    (persistent) XML, which matches config=true.
+    let after = conn.list_domain_disks(TEST_VM).expect("list after attach");
+    let found = after.iter().any(|d| d.target == "vdz");
+    if !found {
+        // Try to detach before bailing so we don't leave state behind.
+        let _ = conn.remove_domain_disk(TEST_VM, "vdz", true, true);
+        cleanup(&path);
+        panic!("attached disk 'vdz' not found in domain disks after attach");
+    }
+
+    // 4. Detach.
+    let detach_res = conn.remove_domain_disk(TEST_VM, "vdz", true, true);
+    if let Err(e) = &detach_res {
+        cleanup(&path);
+        panic!("detach failed: {}", e);
+    }
+
+    // 5. Confirm gone.
+    let final_disks = conn.list_domain_disks(TEST_VM).expect("list final");
+    let still_there = final_disks.iter().any(|d| d.target == "vdz");
+
+    // 6. Always clean up the volume.
+    cleanup(&path);
+
+    assert!(!still_there, "disk 'vdz' still present after detach");
+}
+
+#[test]
+fn test_cdrom_media_change_round_trip() {
+    use virtmanager_rs_lib::libvirt::disk_config::{DiskConfig, DiskSource};
+
+    let conn = connect_testhost();
+
+    // Don't clobber an existing CD-ROM. Pick a target name that isn't used.
+    let existing = conn.list_domain_disks(TEST_VM).expect("list disks");
+    // sdz is a safe name on SATA that is vanishingly unlikely to already exist.
+    let target = "sdz";
+    if existing.iter().any(|d| d.target == target) {
+        panic!("pre-existing {target} — abort");
+    }
+
+    // 1. Add an empty CD-ROM device (no source).
+    let empty_cd = DiskConfig {
+        device: "cdrom".into(),
+        bus: "sata".into(),
+        target: target.into(),
+        source: DiskSource::None,
+        driver_name: Some("qemu".into()),
+        driver_type: Some("raw".into()),
+        readonly: true,
+        ..Default::default()
+    };
+
+    // Live+config. Some hosts reject live CD add on certain bus types —
+    // if so, try config-only so at least the path is covered.
+    let attach = conn.add_domain_disk(TEST_VM, &empty_cd, true, true)
+        .or_else(|_| conn.add_domain_disk(TEST_VM, &empty_cd, false, true));
+    if let Err(e) = &attach {
+        panic!("add empty cdrom failed: {}", e);
+    }
+
+    // 2. Change media: insert an ISO (use any file-ish path — libvirt
+    //    doesn't require the file to exist to parse the update, and we
+    //    only verify round-trip of the xml).
+    //    Pick /var/lib/libvirt/images/ which always exists as a dir on
+    //    testhost; using /dev/null works too — update semantics only care
+    //    about the source= attribute swap on the domain xml.
+    let with_media = DiskConfig {
+        source: DiskSource::File { path: "/dev/null".into() },
+        ..empty_cd.clone()
+    };
+
+    // update_domain_disk with config only is the safest — live update of
+    // a CD-ROM sometimes errors on bus=sata with qemu. We want to exercise
+    // the UpdateDeviceFlags path regardless.
+    let upd = conn.update_domain_disk(TEST_VM, &with_media, false, true);
+    if let Err(e) = &upd {
+        // Clean up before bailing.
+        let _ = conn.remove_domain_disk(TEST_VM, target, true, true);
+        let _ = conn.remove_domain_disk(TEST_VM, target, false, true);
+        panic!("cdrom update failed: {}", e);
+    }
+
+    // 3. Verify the inactive config picked it up.
+    let after = conn.list_domain_disks(TEST_VM).expect("list after update");
+    let cd = after.iter().find(|d| d.target == target).expect("cdrom entry");
+    match &cd.source {
+        DiskSource::File { path } => assert_eq!(path, "/dev/null"),
+        other => panic!("expected File source, got {:?}", other),
+    }
+
+    // 4. Clean up. Try live+config first, fall back to config only.
+    let _ = conn.remove_domain_disk(TEST_VM, target, true, true)
+        .or_else(|_| conn.remove_domain_disk(TEST_VM, target, false, true));
+
+    // 5. Ensure removed.
+    let final_disks = conn.list_domain_disks(TEST_VM).expect("final list");
+    assert!(!final_disks.iter().any(|d| d.target == target),
+        "cdrom target '{target}' should have been removed");
+}
