@@ -1224,3 +1224,72 @@ fn test_get_domain_capabilities_testhost() {
         caps.devices.disk_buses, caps.devices.graphics_types
     );
 }
+
+// ─── Round A: boot / firmware ───
+//
+// fedora-workstation is the disposable test target. Its persistent
+// config survives between runs; we save+restore so this test is
+// idempotent.
+
+#[test]
+fn test_parse_boot_config_on_fedora() {
+    let conn = connect_testhost();
+    let cfg = conn.get_boot_config("fedora-workstation")
+        .expect("get_boot_config");
+    // fedora-workstation was seen to use EFI earlier.
+    println!("fedora-workstation boot: fw={} machine={:?} order={:?}",
+        cfg.firmware, cfg.machine, cfg.boot_order);
+    assert!(!cfg.firmware.is_empty());
+    assert!(cfg.machine.is_some());
+}
+
+#[test]
+fn test_boot_menu_toggle_round_trip() {
+    // Boot order is libvirt-validated against the VM's actual devices
+    // (a <boot dev='cdrom'/> gets stripped when there is no CD-ROM).
+    // Use boot menu enable/disable as a stable round-trip probe instead.
+    let conn = connect_testhost();
+    let before = conn.get_boot_config("fedora-workstation").unwrap();
+
+    let want = !before.boot_menu_enabled;
+    let patch = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+        boot_menu_enabled: Some(want),
+        boot_menu_timeout_ms: Some(Some(3000)),
+        ..Default::default()
+    };
+    conn.apply_boot_patch("fedora-workstation", &patch).expect("toggle bootmenu");
+    let mid = conn.get_boot_config("fedora-workstation").unwrap();
+    assert_eq!(mid.boot_menu_enabled, want);
+
+    // Restore
+    let restore = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+        boot_menu_enabled: Some(before.boot_menu_enabled),
+        boot_menu_timeout_ms: Some(before.boot_menu_timeout_ms),
+        ..Default::default()
+    };
+    conn.apply_boot_patch("fedora-workstation", &restore).expect("restore");
+    let after = conn.get_boot_config("fedora-workstation").unwrap();
+    assert_eq!(after.boot_menu_enabled, before.boot_menu_enabled);
+}
+
+#[test]
+fn test_apply_event_action_round_trip() {
+    let conn = connect_testhost();
+    let before = conn.get_boot_config("fedora-workstation").unwrap();
+
+    let patch = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+        on_poweroff: Some("restart".into()),
+        ..Default::default()
+    };
+    conn.apply_boot_patch("fedora-workstation", &patch).expect("apply");
+    let mid = conn.get_boot_config("fedora-workstation").unwrap();
+    assert_eq!(mid.on_poweroff.as_deref(), Some("restart"));
+
+    let restore = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+        on_poweroff: before.on_poweroff.clone(),
+        ..Default::default()
+    };
+    conn.apply_boot_patch("fedora-workstation", &restore).expect("restore");
+    let after = conn.get_boot_config("fedora-workstation").unwrap();
+    assert_eq!(after.on_poweroff, before.on_poweroff);
+}

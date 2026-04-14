@@ -7,4 +7,5 @@ pub mod vnc;
 pub mod spice;
 pub mod hostdev;
 pub mod domain_caps;
+pub mod boot;
 pub mod storage;

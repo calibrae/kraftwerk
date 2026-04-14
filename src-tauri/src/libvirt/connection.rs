@@ -187,6 +187,25 @@ impl LibvirtConnection {
         })
     }
 
+
+    /// Parse boot / firmware / machine / events from a domain XML.
+    pub fn get_boot_config(&self, name: &str) -> Result<crate::libvirt::boot_config::BootConfig, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::boot_config::parse(&xml)
+    }
+
+    /// Apply a BootPatch to a domain. Defaults to persistent (config) only —
+    /// most boot/firmware changes require a restart anyway.
+    pub fn apply_boot_patch(
+        &self,
+        name: &str,
+        patch: &crate::libvirt::boot_config::BootPatch,
+    ) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?; // inactive definition
+        let new_xml = crate::libvirt::boot_config::apply(&xml, patch)?;
+        self.define_domain_xml(&new_xml)
+    }
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.
@@ -270,7 +289,7 @@ impl LibvirtConnection {
         &self,
         name: &str,
     ) -> Result<Vec<crate::libvirt::hostdev::HostDevice>, VirtManagerError> {
-        let xml = self.get_domain_xml(name, false)?;
+        let xml = self.get_domain_xml(name, true)?;
         crate::libvirt::hostdev::parse_hostdevs(&xml)
     }
 
