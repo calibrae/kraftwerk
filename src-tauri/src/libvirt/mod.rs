@@ -8,6 +8,7 @@ pub mod boot_config;
 pub mod disk_config;
 pub mod display_config;
 pub mod virtio_devices;
+pub mod char_devices;
 pub mod domain_builder;
 pub mod network_config;
 pub mod nic_config;

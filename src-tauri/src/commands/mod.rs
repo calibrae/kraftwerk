@@ -11,5 +11,6 @@ pub mod boot;
 pub mod disks;
 pub mod display;
 pub mod virtio;
+pub mod char_devices;
 pub mod storage;
 pub mod nics;

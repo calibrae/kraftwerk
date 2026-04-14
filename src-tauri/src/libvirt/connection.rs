@@ -496,6 +496,109 @@ impl LibvirtConnection {
     ) -> Result<(), VirtManagerError> {
         self.detach_device(name, xml, live, config)
     }
+    // -- Char devices (Round F) --
+
+    /// Get a snapshot of all character-devices on a domain
+    /// (serials, consoles, channels, parallels).
+    pub fn get_char_devices(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::char_devices::CharDevicesSnapshot, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        Ok(crate::libvirt::char_devices::CharDevicesSnapshot {
+            serials: crate::libvirt::char_devices::parse_serials(&xml)?,
+            consoles: crate::libvirt::char_devices::parse_consoles(&xml)?,
+            channels: crate::libvirt::char_devices::parse_channels(&xml)?,
+            parallels: crate::libvirt::char_devices::parse_parallels(&xml)?,
+        })
+    }
+
+    /// Add a channel to a domain (e.g. qemu-ga, vdagent). libvirt will
+    /// auto-add the required virtio-serial controller on first channel.
+    pub fn add_channel(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::char_devices::ChannelConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let xml = crate::libvirt::char_devices::build_channel(cfg);
+        self.attach_device(name, &xml, live, config)
+    }
+
+    /// Remove a channel matched by <target name='...'>.
+    pub fn remove_channel(
+        &self,
+        name: &str,
+        target_name: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        // We need the full channel XML to detach_device_flags — match by
+        // name against our parsed channels.
+        let snap = self.get_char_devices(name)?;
+        let ch = snap.channels.iter()
+            .find(|c| c.target_name.as_deref() == Some(target_name))
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "removeChannel".into(),
+                reason: format!("no channel with target name '{}'", target_name),
+            })?;
+        let xml = crate::libvirt::char_devices::build_channel(ch);
+        self.detach_device(name, &xml, live, config)
+    }
+
+    /// Add a serial port.
+    pub fn add_serial(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::char_devices::SerialConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let xml = crate::libvirt::char_devices::build_serial(cfg);
+        self.attach_device(name, &xml, live, config)
+    }
+
+    /// Remove a serial port by target port number.
+    pub fn remove_serial(
+        &self,
+        name: &str,
+        port: u32,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let snap = self.get_char_devices(name)?;
+        let s = snap.serials.iter()
+            .find(|s| s.target_port == Some(port))
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "removeSerial".into(),
+                reason: format!("no serial with target port {}", port),
+            })?;
+        let xml = crate::libvirt::char_devices::build_serial(s);
+        self.detach_device(name, &xml, live, config)
+    }
+
+    /// Preset: add the standard qemu-guest-agent channel.
+    pub fn add_guest_agent_channel(
+        &self,
+        name: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let cfg = crate::libvirt::char_devices::guest_agent_channel();
+        self.add_channel(name, &cfg, live, config)
+    }
+
+    /// Preset: add the SPICE vdagent channel.
+    pub fn add_spice_vdagent_channel(
+        &self,
+        name: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let cfg = crate::libvirt::char_devices::spice_vdagent_channel();
+        self.add_channel(name, &cfg, live, config)
+    }
 
 
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
