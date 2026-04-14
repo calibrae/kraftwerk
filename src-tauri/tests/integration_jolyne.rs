@@ -1293,3 +1293,152 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round D: display (graphics / video / sound / input) ───
+
+#[test]
+fn test_parse_display_config_on_fedora() {
+    let conn = connect_testhost();
+    let cfg = conn
+        .get_display_config("fedora-workstation")
+        .expect("get_display_config");
+    println!(
+        "fedora-workstation display: {} graphics, {} video, {} sound, {} input",
+        cfg.graphics.len(),
+        cfg.video.len(),
+        cfg.sound.len(),
+        cfg.input.len(),
+    );
+    // Live fedora-workstation has a SPICE graphics + virtio video + ich9 sound
+    // + tablet/mouse/keyboard inputs. We only assert the minimum (presence),
+    // not exact values, so the test stays stable if the VM is reconfigured.
+    assert!(!cfg.graphics.is_empty(), "should have at least one <graphics>");
+    assert!(!cfg.video.is_empty(), "should have at least one <video>");
+    assert!(!cfg.input.is_empty(), "should have at least one <input>");
+    // Graphics type should be a known value.
+    let gtype = &cfg.graphics[0].r#type;
+    assert!(
+        matches!(gtype.as_str(), "spice" | "vnc" | "rdp" | "sdl" | "dbus" | "egl-headless" | "none"),
+        "unexpected graphics type {gtype}"
+    );
+    // Primary video.
+    let primary = cfg.video.iter().find(|v| v.primary).or(cfg.video.first());
+    println!("  primary video model = {:?}", primary.map(|v| &v.model));
+}
+
+#[test]
+fn test_video_model_round_trip_virtio_cirrus_virtio() {
+    let conn = connect_testhost();
+    let before = conn
+        .get_display_config("fedora-workstation")
+        .expect("get_display_config");
+    let original_video = before
+        .video
+        .iter()
+        .find(|v| v.primary)
+        .or(before.video.first())
+        .cloned()
+        .expect("at least one <video>");
+
+    // Flip to cirrus.
+    let mut flip = original_video.clone();
+    flip.model = "cirrus".to_string();
+    // cirrus doesn't support blob / accel3d; strip them to avoid libvirt
+    // schema rejection.
+    flip.blob = None;
+    flip.accel3d = false;
+    // Keep heads=1 primary=yes.
+    flip.primary = true;
+    if flip.heads.is_none() {
+        flip.heads = Some(1);
+    }
+
+    let patch = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+        video: Some(flip.clone()),
+        ..Default::default()
+    };
+    conn.apply_display_patch("fedora-workstation", &patch)
+        .expect("flip to cirrus");
+    let mid = conn.get_display_config("fedora-workstation").unwrap();
+    let mid_model = mid
+        .video
+        .iter()
+        .find(|v| v.primary)
+        .or(mid.video.first())
+        .map(|v| v.model.clone())
+        .unwrap_or_default();
+    assert_eq!(mid_model, "cirrus", "video should be cirrus after flip");
+
+    // Restore.
+    let restore = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+        video: Some(original_video.clone()),
+        ..Default::default()
+    };
+    conn.apply_display_patch("fedora-workstation", &restore)
+        .expect("restore original video");
+    let after = conn.get_display_config("fedora-workstation").unwrap();
+    let after_model = after
+        .video
+        .iter()
+        .find(|v| v.primary)
+        .or(after.video.first())
+        .map(|v| v.model.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        after_model, original_video.model,
+        "video model should be restored"
+    );
+}
+
+#[test]
+fn test_input_list_round_trip() {
+    // Save current input list, swap in a minimal list, verify, then restore.
+    let conn = connect_testhost();
+    let before = conn.get_display_config("fedora-workstation").unwrap();
+    let original_inputs = before.input.clone();
+    assert!(!original_inputs.is_empty(), "need baseline inputs");
+
+    // Define a canonical "tablet + keyboard" list as the test payload.
+    let new_inputs = vec![
+        virtmanager_rs_lib::libvirt::display_config::InputConfig {
+            r#type: "tablet".into(),
+            bus: Some("usb".into()),
+        },
+        virtmanager_rs_lib::libvirt::display_config::InputConfig {
+            r#type: "keyboard".into(),
+            bus: Some("ps2".into()),
+        },
+    ];
+    let patch = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+        inputs: Some(new_inputs.clone()),
+        ..Default::default()
+    };
+    conn.apply_display_patch("fedora-workstation", &patch)
+        .expect("apply inputs");
+
+    let mid = conn.get_display_config("fedora-workstation").unwrap();
+    // libvirt may auto-add a mouse on some machine types — check that
+    // at minimum our tablet is present and the keyboard we asked for
+    // is present.
+    assert!(
+        mid.input.iter().any(|i| i.r#type == "tablet" && i.bus.as_deref() == Some("usb")),
+        "expected usb tablet in {:?}",
+        mid.input
+    );
+    assert!(
+        mid.input.iter().any(|i| i.r#type == "keyboard"),
+        "expected keyboard in {:?}",
+        mid.input
+    );
+
+    // Restore the original list.
+    let restore = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+        inputs: Some(original_inputs.clone()),
+        ..Default::default()
+    };
+    conn.apply_display_patch("fedora-workstation", &restore)
+        .expect("restore inputs");
+    let after = conn.get_display_config("fedora-workstation").unwrap();
+    // Spot-check: counts match (libvirt may reorder slightly).
+    assert_eq!(after.input.len(), original_inputs.len(), "input count restored");
+}

@@ -206,6 +206,51 @@ impl LibvirtConnection {
         self.define_domain_xml(&new_xml)
     }
 
+    /// Parse the full display bundle (graphics / video / sound / input)
+    /// from a domain XML. The domain XML is fetched INACTIVE, i.e. the
+    /// persistent definition — NOT with VIR_DOMAIN_XML_SECURE, so the
+    /// `graphics.passwd` field will be absent for SPICE/VNC VMs that
+    /// have one set. See display_config.rs docstring.
+    pub fn get_display_config(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::display_config::DisplayConfig, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        Ok(crate::libvirt::display_config::DisplayConfig {
+            graphics: crate::libvirt::display_config::parse_graphics(&xml)?,
+            video: crate::libvirt::display_config::parse_video(&xml)?,
+            sound: crate::libvirt::display_config::parse_sound(&xml)?,
+            input: crate::libvirt::display_config::parse_input(&xml)?,
+        })
+    }
+
+    /// Apply a DisplayPatch to a domain (persistent / config flag). Each
+    /// subsection in the patch is applied independently against the
+    /// successive rewritten XML, so `Some(graphics) + Some(video)` both
+    /// take effect. Live hotplug of graphics type changes rarely works,
+    /// so we only update the persistent definition — a shutdown + start
+    /// is expected for most display changes.
+    pub fn apply_display_patch(
+        &self,
+        name: &str,
+        patch: &crate::libvirt::display_config::DisplayPatch,
+    ) -> Result<(), VirtManagerError> {
+        let mut xml = self.get_domain_xml(name, true)?;
+        if let Some(ref g) = patch.graphics {
+            xml = crate::libvirt::display_config::apply_replace_graphics(&xml, g)?;
+        }
+        if let Some(ref v) = patch.video {
+            xml = crate::libvirt::display_config::apply_replace_video(&xml, v)?;
+        }
+        if let Some(ref s) = patch.sound {
+            xml = crate::libvirt::display_config::apply_replace_sound(&xml, s)?;
+        }
+        if let Some(ref inputs) = patch.inputs {
+            xml = crate::libvirt::display_config::apply_replace_inputs(&xml, inputs)?;
+        }
+        self.define_domain_xml(&xml)
+    }
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.
