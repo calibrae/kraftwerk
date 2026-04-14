@@ -13,10 +13,12 @@
     "windows": [
       {
         "title": "VirtManager",
-        "width": 1100,
-        "height": 700,
-        "minWidth": 800,
-        "minHeight": 500
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 960,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true
       }
     ],
     "security": {
