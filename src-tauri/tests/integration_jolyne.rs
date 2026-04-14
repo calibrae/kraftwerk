@@ -1138,3 +1138,14 @@ fn test_spice_session_to_prod_brokers() {
 
     session.close();
 }
+
+#[test]
+fn test_secure_xml_includes_spice_password() {
+    let conn = connect_testhost();
+    let xml = conn
+        .get_domain_xml_flags("fedora-workstation", false, true)
+        .expect("secure XML");
+    let pwd = parse_spice_password(&xml);
+    assert!(pwd.is_some(), "fedora-workstation SPICE password should be present with VIR_DOMAIN_XML_SECURE");
+    println!("fedora-workstation SPICE password redaction bypassed, len={}", pwd.unwrap().len());
+}

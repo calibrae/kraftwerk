@@ -134,10 +134,27 @@ impl LibvirtConnection {
     }
 
     /// Get the XML description for a domain.
+    ///
+    /// Libvirt flags bit-field:
+    ///   0x01 VIR_DOMAIN_XML_SECURE   — include secure fields (VNC/SPICE password)
+    ///   0x02 VIR_DOMAIN_XML_INACTIVE — return the persistent config
     pub fn get_domain_xml(&self, name: &str, inactive: bool) -> Result<String, VirtManagerError> {
+        self.get_domain_xml_flags(name, inactive, false)
+    }
+
+    /// Variant that optionally requests secure fields (for SPICE/VNC
+    /// password extraction). Requires sufficient libvirt privileges.
+    pub fn get_domain_xml_flags(
+        &self,
+        name: &str,
+        inactive: bool,
+        secure: bool,
+    ) -> Result<String, VirtManagerError> {
         self.with_connection(|conn| {
             let domain = Self::lookup_domain(conn, name)?;
-            let flags = if inactive { 2 } else { 0 };
+            let mut flags: u32 = 0;
+            if secure { flags |= 1; }   // VIR_DOMAIN_XML_SECURE
+            if inactive { flags |= 2; } // VIR_DOMAIN_XML_INACTIVE
             domain
                 .get_xml_desc(flags)
                 .map_err(|e| VirtManagerError::OperationFailed {

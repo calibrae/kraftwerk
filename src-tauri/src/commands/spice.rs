@@ -228,7 +228,7 @@ pub fn open_spice(
     state.close_spice();
 
     // Parse VM XML for SPICE endpoint + password
-    let xml = state.libvirt().get_domain_xml(&name, false)?;
+    let xml = state.libvirt().get_domain_xml_flags(&name, false, true)?;
     let (listen, port) = spice_proxy::parse_spice_endpoint(&xml).ok_or_else(|| {
         VirtManagerError::OperationFailed {
             operation: "parseSpiceEndpoint".into(),
