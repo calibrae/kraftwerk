@@ -601,6 +601,150 @@ impl LibvirtConnection {
     }
 
 
+    // ── Round G: filesystem passthrough + shared memory ──────────────
+
+    pub fn list_filesystems(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::filesystem_config::FilesystemConfig>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::filesystem_config::parse_filesystems(&xml)
+    }
+
+    /// Add a `<filesystem>` device to the domain. If the caller passes a
+    /// virtiofs filesystem and the domain does not yet have
+    /// `<memoryBacking><access mode='shared'/></memoryBacking>`, the call
+    /// fails. Pass `force_memory_backing=true` to first patch the
+    /// persistent definition to enable shared memoryBacking (and then add
+    /// the filesystem).
+    ///
+    /// The memoryBacking change is persistent-only - a live hot-plug is
+    /// impossible if the running QEMU wasn't started with shared memory.
+    pub fn add_filesystem(
+        &self,
+        name: &str,
+        fs: &crate::libvirt::filesystem_config::FilesystemConfig,
+        force_memory_backing: bool,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        use crate::libvirt::filesystem_config as fsc;
+
+        let needs_shared = fs.driver_type == fsc::FilesystemDriver::Virtiofs;
+        if needs_shared {
+            let cur_xml = self.get_domain_xml(name, true)?;
+            if !fsc::has_shared_memory_backing(&cur_xml) {
+                if !force_memory_backing {
+                    return Err(VirtManagerError::OperationFailed {
+                        operation: "add_filesystem".into(),
+                        reason: "virtiofs requires <memoryBacking><access mode='shared'/></memoryBacking>; re-run with force_memory_backing=true to enable it persistently".into(),
+                    });
+                }
+                self.enable_shared_memory_backing(name)?;
+            }
+        }
+
+        let fragment = fsc::build_filesystem_xml(fs)?;
+        self.attach_device(name, &fragment, live, config)
+    }
+
+    pub fn remove_filesystem(
+        &self,
+        name: &str,
+        target_dir: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        // Look up the current entry so we can synthesise a matching
+        // fragment for the detach call - libvirt matches on the element
+        // shape, not just a target_dir string.
+        let list = self.list_filesystems(name)?;
+        let fs = list
+            .iter()
+            .find(|f| f.target_dir == target_dir)
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "remove_filesystem".into(),
+                reason: format!("no filesystem with target_dir='{target_dir}'"),
+            })?;
+        let fragment = crate::libvirt::filesystem_config::build_filesystem_xml(fs)?;
+        self.detach_device(name, &fragment, live, config)
+    }
+
+    /// Update a filesystem in place by target_dir. Detach + attach
+    /// (update_device_flags is finicky about virtiofs; a clean cycle is
+    /// more predictable).
+    pub fn update_filesystem(
+        &self,
+        name: &str,
+        fs: &crate::libvirt::filesystem_config::FilesystemConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        // Remove by target_dir, then re-add with the new config.
+        let _ = self.remove_filesystem(name, &fs.target_dir, live, config);
+        self.add_filesystem(name, fs, false, live, config)
+    }
+
+    pub fn list_shmems(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::filesystem_config::ShmemConfig>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::filesystem_config::parse_shmems(&xml)
+    }
+
+    pub fn add_shmem(
+        &self,
+        name: &str,
+        sh: &crate::libvirt::filesystem_config::ShmemConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let fragment = crate::libvirt::filesystem_config::build_shmem_xml(sh)?;
+        self.attach_device(name, &fragment, live, config)
+    }
+
+    pub fn remove_shmem(
+        &self,
+        name: &str,
+        shmem_name: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let list = self.list_shmems(name)?;
+        let sh = list
+            .iter()
+            .find(|s| s.name == shmem_name)
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "remove_shmem".into(),
+                reason: format!("no shmem named '{shmem_name}'"),
+            })?;
+        let fragment = crate::libvirt::filesystem_config::build_shmem_xml(sh)?;
+        self.detach_device(name, &fragment, live, config)
+    }
+
+    /// Add `<memoryBacking><access mode='shared'/></memoryBacking>` to
+    /// the persistent domain definition if it isn't already there.
+    /// Persistent-only - the running QEMU must be restarted to pick it
+    /// up. Noop if the element is already present.
+    pub fn enable_shared_memory_backing(&self, name: &str) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        if crate::libvirt::filesystem_config::has_shared_memory_backing(&xml) {
+            return Ok(());
+        }
+        let new_xml = crate::libvirt::filesystem_config::apply_enable_shared_memory_backing(&xml)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Remove `<memoryBacking>` from the persistent definition. Used by
+    /// integration-test cleanup so we don't leave the test VM forever in
+    /// shared-memory mode after a virtiofs probe.
+    pub fn remove_memory_backing(&self, name: &str) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::filesystem_config::apply_remove_memory_backing(&xml)?;
+        self.define_domain_xml(&new_xml)
+    }
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.

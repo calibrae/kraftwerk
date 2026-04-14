@@ -19,6 +19,7 @@ use commands::nics as cmd_nics;
 use commands::display as cmd_display;
 use commands::virtio as cmd_virtio;
 use commands::char_devices as cmd_char_devices;
+use commands::filesystem as cmd_filesystem;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -126,6 +127,14 @@ pub fn run() {
             cmd_char_devices::remove_serial,
             cmd_char_devices::add_guest_agent_channel,
             cmd_char_devices::add_spice_vdagent_channel,
+            cmd_filesystem::list_filesystems,
+            cmd_filesystem::add_filesystem,
+            cmd_filesystem::remove_filesystem,
+            cmd_filesystem::update_filesystem,
+            cmd_filesystem::list_shmems,
+            cmd_filesystem::add_shmem,
+            cmd_filesystem::remove_shmem,
+            cmd_filesystem::enable_shared_memory_backing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
