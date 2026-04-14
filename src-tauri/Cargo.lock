@@ -427,6 +427,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-client"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "capsaicin-glz",
  "capsaicin-lz",
@@ -442,6 +443,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-glz"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "capsaicin-lz",
  "thiserror 1.0.69",
@@ -450,6 +452,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-lz"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "thiserror 1.0.69",
 ]
@@ -457,6 +460,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-net"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "bytes",
  "capsaicin-proto",
@@ -471,6 +475,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-proto"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "bytes",
  "thiserror 1.0.69",
@@ -479,6 +484,7 @@ dependencies = [
 [[package]]
 name = "capsaicin-quic"
 version = "0.1.0"
+source = "git+https://github.com/calibrae/capsaicin.git?rev=1ba1b34#1ba1b34ebbd25d638d503d49139053d131c2fdf5"
 dependencies = [
  "thiserror 1.0.69",
 ]
