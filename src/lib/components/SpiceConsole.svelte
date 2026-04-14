@@ -38,6 +38,13 @@
   let hasFocus = $state(false);
   let grabbed = $state(false); // pointer-lock active
 
+  // Diagnostics: rolling counters so the user can tell whether input is
+  // being sent and whether display updates are coming back.
+  let inputSent = $state(0);
+  let displayRecv = $state(0);
+  let lastInputAt = $state(0);
+  let lastDisplayAt = $state(0);
+
   const eventQueue = [];
   let rafHandle = null;
 
@@ -98,11 +105,11 @@
     switch (e.kind) {
       case "surface_created": await handleSurfaceCreated(e); break;
       case "surface_destroyed": break;
-      case "region": if (ctx) paintRegion(e.rect, e.pixels, e.format); break;
-      case "copy_rect": if (ctx) paintCopyRect(e); break;
+      case "region": if (ctx) { paintRegion(e.rect, e.pixels, e.format); displayRecv++; lastDisplayAt = Date.now(); } break;
+      case "copy_rect": if (ctx) { paintCopyRect(e); displayRecv++; lastDisplayAt = Date.now(); } break;
       case "stream_created": streamCount++; break;
       case "stream_destroyed": streamCount = Math.max(0, streamCount - 1); break;
-      case "stream_frame": if (ctx) paintRegion(e.destRect, e.pixels, "xrgb8888"); break;
+      case "stream_frame": if (ctx) { paintRegion(e.destRect, e.pixels, "xrgb8888"); displayRecv++; lastDisplayAt = Date.now(); } break;
       case "reset":
         if (ctx && canvasEl) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvasEl.width, canvasEl.height); }
         break;
@@ -252,11 +259,7 @@
       const code = KEY_MAP[ev.code];
       if (code == null) return;
       ev.preventDefault();
-      try {
-        await invoke("spice_input", {
-          event: { kind: down ? "key_down" : "key_up", scancode: code },
-        });
-      } catch (_) {}
+      await sendInput({ kind: down ? "key_down" : "key_up", scancode: code });
     };
   }
 
@@ -273,11 +276,7 @@
     const dx = ev.movementX | 0;
     const dy = ev.movementY | 0;
     if (dx === 0 && dy === 0) return;
-    try {
-      await invoke("spice_input", {
-        event: { kind: "mouse_motion", dx, dy, buttons: buttonsMask },
-      });
-    } catch (_) {}
+    await sendInput({ kind: "mouse_motion", dx, dy, buttons: buttonsMask });
   }
 
   async function mouseDown(ev) {
@@ -292,11 +291,7 @@
     }
     buttonsMask |= 1 << (button - 1);
     ev.preventDefault();
-    try {
-      await invoke("spice_input", {
-        event: { kind: "mouse_press", button, buttons: buttonsMask },
-      });
-    } catch (_) {}
+    await sendInput({ kind: "mouse_press", button, buttons: buttonsMask });
   }
 
   async function mouseUp(ev) {
@@ -304,20 +299,24 @@
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
     buttonsMask &= ~(1 << (button - 1));
-    try {
-      await invoke("spice_input", {
-        event: { kind: "mouse_release", button, buttons: buttonsMask },
-      });
-    } catch (_) {}
+    await sendInput({ kind: "mouse_release", button, buttons: buttonsMask });
   }
 
   async function wheel(ev) {
     if (!grabbed) return;
     ev.preventDefault();
     const button = ev.deltaY < 0 ? 4 : 5;
+    await sendInput({ kind: "mouse_press", button, buttons: buttonsMask });
+    await sendInput({ kind: "mouse_release", button, buttons: buttonsMask });
+  }
+
+
+
+  async function sendInput(event) {
+    inputSent++;
+    lastInputAt = Date.now();
     try {
-      await invoke("spice_input", { event: { kind: "mouse_press", button, buttons: buttonsMask } });
-      await invoke("spice_input", { event: { kind: "mouse_release", button, buttons: buttonsMask } });
+      await invoke("spice_input", { event });
     } catch (_) {}
   }
 
@@ -347,6 +346,11 @@
       {/if}
       {#if streamCount > 0}
         <span class="meta">{streamCount} stream{streamCount === 1 ? "" : "s"}</span>
+      {/if}
+      {#if connected}
+        <span class="meta" title="Input events sent / display events received">
+          ↑{inputSent} · ↓{displayRecv}
+        </span>
       {/if}
     </span>
     <div class="actions">
