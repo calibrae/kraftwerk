@@ -1,4 +1,4 @@
-# virtmanager-rs
+# kraftwerk
 
 Cross-platform desktop manager for remote KVM/QEMU virtual machines.
 Rust + Tauri + Svelte, speaking libvirt over SSH.
@@ -53,8 +53,8 @@ client machine (for the Rust FFI) and the hypervisor, SSH key
 auth to the hypervisor.
 
 ```bash
-git clone https://github.com/calibrae/virtmanager-rs
-cd virtmanager-rs
+git clone https://github.com/calibrae/kraftwerk
+cd kraftwerk
 npm install
 npm run tauri dev
 ```

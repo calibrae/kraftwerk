@@ -16,8 +16,8 @@ brew install libvirt pkg-config
 Clone + build:
 
 ```bash
-git clone https://github.com/calibrae/virtmanager-rs
-cd virtmanager-rs
+git clone https://github.com/calibrae/kraftwerk
+cd kraftwerk
 npm install
 cd src-tauri && cargo build
 ```

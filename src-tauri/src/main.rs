@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    virtmanager_rs_lib::run()
+    kraftwerk_lib::run()
 }

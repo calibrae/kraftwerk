@@ -2165,6 +2165,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraftwerk"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "capsaicin-client",
+ "env_logger",
+ "futures-util",
+ "keyring",
+ "libc",
+ "log",
+ "mockall",
+ "quick-xml 0.37.5",
+ "regex",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+ "virt",
+]
+
+[[package]]
 name = "kuchikiki"
 version = "0.8.8-speedreader"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5085,32 +5111,6 @@ checksum = "8762dc8eb11b230e7ed6c94152910f8382a128eed861af21047a203e3e2ebb00"
 dependencies = [
  "libc",
  "pkg-config",
-]
-
-[[package]]
-name = "virtmanager-rs"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "capsaicin-client",
- "env_logger",
- "futures-util",
- "keyring",
- "libc",
- "log",
- "mockall",
- "quick-xml 0.37.5",
- "regex",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
- "uuid",
- "virt",
 ]
 
 [[package]]

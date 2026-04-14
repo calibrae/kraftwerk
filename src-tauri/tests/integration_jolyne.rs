@@ -6,8 +6,8 @@
 //! SAFETY: Only fedora-workstation is used for lifecycle tests.
 //! Production VMs are NEVER modified.
 
-use virtmanager_rs_lib::libvirt::connection::LibvirtConnection;
-use virtmanager_rs_lib::models::vm::{GraphicsType, VmState};
+use kraftwerk_lib::libvirt::connection::LibvirtConnection;
+use kraftwerk_lib::models::vm::{GraphicsType, VmState};
 
 const JOLYNE_URI: &str = "qemu+ssh://testuser@testhost/system";
 
@@ -352,7 +352,7 @@ fn test_create_and_delete_network() {
         name: TEST_NET_NAME,
     };
 
-    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+    let xml = kraftwerk_lib::libvirt::network_config::build_nat_network_xml(
         TEST_NET_NAME,
         TEST_NET_BRIDGE,
         "10.99.99.1",
@@ -382,7 +382,7 @@ fn test_network_config_roundtrip() {
         name: TEST_NET_NAME,
     };
 
-    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+    let xml = kraftwerk_lib::libvirt::network_config::build_nat_network_xml(
         TEST_NET_NAME,
         TEST_NET_BRIDGE,
         "10.99.99.1",
@@ -411,7 +411,7 @@ fn test_network_stop_and_start() {
         name: TEST_NET_NAME,
     };
 
-    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+    let xml = kraftwerk_lib::libvirt::network_config::build_nat_network_xml(
         TEST_NET_NAME,
         TEST_NET_BRIDGE,
         "10.99.99.1",
@@ -443,7 +443,7 @@ fn test_network_autostart_toggle() {
         name: TEST_NET_NAME,
     };
 
-    let xml = virtmanager_rs_lib::libvirt::network_config::build_nat_network_xml(
+    let xml = kraftwerk_lib::libvirt::network_config::build_nat_network_xml(
         TEST_NET_NAME,
         TEST_NET_BRIDGE,
         "10.99.99.1",
@@ -473,7 +473,7 @@ fn test_get_network_nonexistent_fails() {
 
 // ─── Network creation modes ───
 
-use virtmanager_rs_lib::libvirt::network_config::{
+use kraftwerk_lib::libvirt::network_config::{
     build_network_xml, Ipv4BuildParams, Ipv6BuildParams, NetworkBuildParams,
 };
 
@@ -599,7 +599,7 @@ fn test_create_nat_with_domain_and_dhcp() {
 // We test against existing pools (read-only) and create a disposable test
 // pool for write operations.
 
-use virtmanager_rs_lib::libvirt::storage_config::{
+use kraftwerk_lib::libvirt::storage_config::{
     build_pool_xml, build_volume_xml, PoolBuildParams, VolumeBuildParams,
 };
 
@@ -827,7 +827,7 @@ fn test_testhost_prod_pools_untouched() {
 // disk, verifies it's defined with correct attributes, then cleans up
 // both the domain and the volume.
 
-use virtmanager_rs_lib::libvirt::domain_builder::{
+use kraftwerk_lib::libvirt::domain_builder::{
     build_domain_xml, DiskSource, DomainBuildParams, InstallMedia, NetworkSource,
 };
 
@@ -882,8 +882,8 @@ fn test_create_and_undefine_vm() {
     let _ = conn.undefine_domain(TEST_VM_NAME);
 
     // Create a small test volume
-    let vol_xml = virtmanager_rs_lib::libvirt::storage_config::build_volume_xml(
-        &virtmanager_rs_lib::libvirt::storage_config::VolumeBuildParams {
+    let vol_xml = kraftwerk_lib::libvirt::storage_config::build_volume_xml(
+        &kraftwerk_lib::libvirt::storage_config::VolumeBuildParams {
             name: TEST_VOL_NAME,
             capacity_bytes: 64 * 1024 * 1024, // 64MB
             format: "qcow2",
@@ -942,7 +942,7 @@ fn test_create_vm_with_pending_disk_fails_gracefully() {
 
 // ─── VNC SSH tunnel tests ───
 
-use virtmanager_rs_lib::libvirt::vnc_proxy::{parse_ssh_target, parse_vnc_endpoint, VncSession};
+use kraftwerk_lib::libvirt::vnc_proxy::{parse_ssh_target, parse_vnc_endpoint, VncSession};
 
 #[test]
 fn test_parse_vnc_endpoint_from_example-firewall_xml() {
@@ -1068,7 +1068,7 @@ fn test_sample_cpu_time_increments() {
 
 // ─── SPICE via capsaicin integration ───
 
-use virtmanager_rs_lib::libvirt::spice_proxy::{
+use kraftwerk_lib::libvirt::spice_proxy::{
     parse_spice_endpoint, parse_spice_password, SpiceSession,
 };
 
@@ -1091,7 +1091,7 @@ fn test_spice_session_to_prod_brokers() {
     let xml = conn.get_domain_xml("example-broker", false).unwrap();
     let (listen, port) = parse_spice_endpoint(&xml).expect("SPICE port");
     let password = parse_spice_password(&xml).unwrap_or_default();
-    let target = virtmanager_rs_lib::libvirt::vnc_proxy::parse_ssh_target(JOLYNE_URI).unwrap();
+    let target = kraftwerk_lib::libvirt::vnc_proxy::parse_ssh_target(JOLYNE_URI).unwrap();
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1156,7 +1156,7 @@ fn test_secure_xml_includes_spice_password() {
 
 // ─── Host device enumeration ───
 
-use virtmanager_rs_lib::libvirt::hostdev::HostDevice;
+use kraftwerk_lib::libvirt::hostdev::HostDevice;
 
 #[test]
 fn test_list_host_pci_devices() {
@@ -1253,7 +1253,7 @@ fn test_boot_menu_toggle_round_trip() {
     let before = conn.get_boot_config("fedora-workstation").unwrap();
 
     let want = !before.boot_menu_enabled;
-    let patch = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+    let patch = kraftwerk_lib::libvirt::boot_config::BootPatch {
         boot_menu_enabled: Some(want),
         boot_menu_timeout_ms: Some(Some(3000)),
         ..Default::default()
@@ -1263,7 +1263,7 @@ fn test_boot_menu_toggle_round_trip() {
     assert_eq!(mid.boot_menu_enabled, want);
 
     // Restore
-    let restore = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+    let restore = kraftwerk_lib::libvirt::boot_config::BootPatch {
         boot_menu_enabled: Some(before.boot_menu_enabled),
         boot_menu_timeout_ms: Some(before.boot_menu_timeout_ms),
         ..Default::default()
@@ -1278,7 +1278,7 @@ fn test_apply_event_action_round_trip() {
     let conn = connect_testhost();
     let before = conn.get_boot_config("fedora-workstation").unwrap();
 
-    let patch = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+    let patch = kraftwerk_lib::libvirt::boot_config::BootPatch {
         on_poweroff: Some("restart".into()),
         ..Default::default()
     };
@@ -1286,7 +1286,7 @@ fn test_apply_event_action_round_trip() {
     let mid = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(mid.on_poweroff.as_deref(), Some("restart"));
 
-    let restore = virtmanager_rs_lib::libvirt::boot_config::BootPatch {
+    let restore = kraftwerk_lib::libvirt::boot_config::BootPatch {
         on_poweroff: before.on_poweroff.clone(),
         ..Default::default()
     };
@@ -1314,8 +1314,8 @@ fn test_list_disks_on_fedora() {
 
 #[test]
 fn test_hotplug_disk_round_trip() {
-    use virtmanager_rs_lib::libvirt::disk_config::{DiskConfig, DiskSource};
-    use virtmanager_rs_lib::libvirt::storage_config::{build_volume_xml, VolumeBuildParams};
+    use kraftwerk_lib::libvirt::disk_config::{DiskConfig, DiskSource};
+    use kraftwerk_lib::libvirt::storage_config::{build_volume_xml, VolumeBuildParams};
 
     let conn = connect_testhost();
     // Pick a target name that isn't already taken.
@@ -1394,7 +1394,7 @@ fn test_hotplug_disk_round_trip() {
 
 #[test]
 fn test_cdrom_media_change_round_trip() {
-    use virtmanager_rs_lib::libvirt::disk_config::{DiskConfig, DiskSource};
+    use kraftwerk_lib::libvirt::disk_config::{DiskConfig, DiskSource};
 
     let conn = connect_testhost();
 
@@ -1501,7 +1501,7 @@ fn test_list_domain_nics_on_fedora() {
 
 #[test]
 fn test_hot_add_and_detach_network_nic() {
-    use virtmanager_rs_lib::libvirt::nic_config::{NicConfig, NicSource};
+    use kraftwerk_lib::libvirt::nic_config::{NicConfig, NicSource};
 
     let conn = connect_testhost();
     let vm = conn.list_all_domains().unwrap();
@@ -1540,7 +1540,7 @@ fn test_hot_add_and_detach_network_nic() {
 
 #[test]
 fn test_link_state_toggle_round_trip() {
-    use virtmanager_rs_lib::libvirt::nic_config::{NicConfig, NicSource};
+    use kraftwerk_lib::libvirt::nic_config::{NicConfig, NicSource};
 
     let conn = connect_testhost();
     let vm = conn.list_all_domains().unwrap();
@@ -1636,7 +1636,7 @@ fn test_video_model_round_trip_virtio_cirrus_virtio() {
         flip.heads = Some(1);
     }
 
-    let patch = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+    let patch = kraftwerk_lib::libvirt::display_config::DisplayPatch {
         video: Some(flip.clone()),
         ..Default::default()
     };
@@ -1653,7 +1653,7 @@ fn test_video_model_round_trip_virtio_cirrus_virtio() {
     assert_eq!(mid_model, "cirrus", "video should be cirrus after flip");
 
     // Restore.
-    let restore = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+    let restore = kraftwerk_lib::libvirt::display_config::DisplayPatch {
         video: Some(original_video.clone()),
         ..Default::default()
     };
@@ -1683,16 +1683,16 @@ fn test_input_list_round_trip() {
 
     // Define a canonical "tablet + keyboard" list as the test payload.
     let new_inputs = vec![
-        virtmanager_rs_lib::libvirt::display_config::InputConfig {
+        kraftwerk_lib::libvirt::display_config::InputConfig {
             r#type: "tablet".into(),
             bus: Some("usb".into()),
         },
-        virtmanager_rs_lib::libvirt::display_config::InputConfig {
+        kraftwerk_lib::libvirt::display_config::InputConfig {
             r#type: "keyboard".into(),
             bus: Some("ps2".into()),
         },
     ];
-    let patch = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+    let patch = kraftwerk_lib::libvirt::display_config::DisplayPatch {
         inputs: Some(new_inputs.clone()),
         ..Default::default()
     };
@@ -1715,7 +1715,7 @@ fn test_input_list_round_trip() {
     );
 
     // Restore the original list.
-    let restore = virtmanager_rs_lib::libvirt::display_config::DisplayPatch {
+    let restore = kraftwerk_lib::libvirt::display_config::DisplayPatch {
         inputs: Some(original_inputs.clone()),
         ..Default::default()
     };
@@ -1733,7 +1733,7 @@ fn test_input_list_round_trip() {
 struct PanicGuard<'a> {
     conn: &'a LibvirtConnection,
     vm: &'a str,
-    before: Option<virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig>,
+    before: Option<kraftwerk_lib::libvirt::virtio_devices::PanicConfig>,
 }
 impl<'a> Drop for PanicGuard<'a> {
     fn drop(&mut self) {
@@ -1745,7 +1745,7 @@ impl<'a> Drop for PanicGuard<'a> {
 struct RngGuard<'a> {
     conn: &'a LibvirtConnection,
     vm: &'a str,
-    cfg: virtmanager_rs_lib::libvirt::virtio_devices::RngConfig,
+    cfg: kraftwerk_lib::libvirt::virtio_devices::RngConfig,
     live: bool,
     config: bool,
     armed: bool,
@@ -1795,7 +1795,7 @@ fn test_panic_notifier_round_trip_persistent() {
         before: before.clone(),
     };
 
-    let want = virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig {
+    let want = kraftwerk_lib::libvirt::virtio_devices::PanicConfig {
         model: "pvpanic".into(),
     };
     conn.set_panic("fedora-workstation", Some(&want), false, true)
@@ -1835,7 +1835,7 @@ fn test_rng_hotplug_round_trip() {
 
     // Distinctive shape: builtin backend (no source path) so we can
     // tell it apart from the default /dev/urandom one.
-    let cfg = virtmanager_rs_lib::libvirt::virtio_devices::RngConfig {
+    let cfg = kraftwerk_lib::libvirt::virtio_devices::RngConfig {
         model: "virtio".into(),
         backend_model: "builtin".into(),
         source_path: None,
@@ -1897,7 +1897,7 @@ fn test_read_char_devices_on_fedora() {
 
 #[test]
 fn test_qemu_ga_channel_add_remove_round_trip() {
-    use virtmanager_rs_lib::libvirt::char_devices as chd;
+    use kraftwerk_lib::libvirt::char_devices as chd;
 
     let conn = connect_testhost();
     let before = conn.get_char_devices("fedora-workstation").unwrap();
@@ -1948,7 +1948,7 @@ fn test_qemu_ga_channel_add_remove_round_trip() {
 // so a failed assertion doesn't leave fedora-workstation unbootable on
 // next boot.
 
-use virtmanager_rs_lib::libvirt::filesystem_config as fsc;
+use kraftwerk_lib::libvirt::filesystem_config as fsc;
 
 /// RAII cleanup. On drop, removes any leftover virtiofs filesystem
 /// matching `target_dir` and strips the <memoryBacking> block we added.

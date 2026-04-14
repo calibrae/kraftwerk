@@ -4,7 +4,7 @@
 use std::env;
 use std::fs;
 
-use virtmanager_rs_lib::libvirt::cpu_tune_config::{
+use kraftwerk_lib::libvirt::cpu_tune_config::{
     apply, parse, validate, CpuConfig, CpuTunePatch, IoThreadsConfig, VcpuConfig,
 };
 

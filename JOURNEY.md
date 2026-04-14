@@ -1,4 +1,4 @@
-# virtmanager-rs — Journey Notes
+# kraftwerk — Journey Notes
 
 A Rust + Tauri + Svelte port of the Swift macOS VirtManager, built
 out in one long session against a live KVM host (testhost). From empty
@@ -78,7 +78,7 @@ docs/
   cleanup. No mocks.
 - **capsaicin is its own project.** Pure-Rust SPICE client (RSA auth,
   QUIC, LZ, GLZ, MJPEG, keyboard, mouse, cursor channel) sits at
-  github.com/calibrae/capsaicin. virtmanager-rs depends on it by git
+  github.com/calibrae/capsaicin. kraftwerk depends on it by git
   rev. Two inbox notes from us (mouse-mode + cursor-channel priority)
   → capsaicin shipped both, we pulled the bump, swapped our SPICE
   console to the client/server mouse-mode-aware path.
@@ -173,7 +173,7 @@ union cut through method bodies.
 - **capsaicin** — SPICE client, already separate
 
 Those got proper API surfaces (events / ports / named functions) and
-virtmanager-rs just consumes them.
+kraftwerk just consumes them.
 
 ## Things we deliberately deferred
 

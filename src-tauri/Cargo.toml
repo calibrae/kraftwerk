@@ -1,12 +1,12 @@
 [package]
-name = "virtmanager-rs"
+name = "kraftwerk"
 version = "0.1.0"
 description = "Cross-platform virtual machine manager using libvirt"
 authors = ["Nicolas Bousquet"]
 edition = "2021"
 
 [lib]
-name = "virtmanager_rs_lib"
+name = "kraftwerk_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

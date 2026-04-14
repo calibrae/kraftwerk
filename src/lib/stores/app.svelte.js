@@ -304,7 +304,7 @@ export async function resizeVolume(poolName, path, capacityBytes) {
 // ── Auto-refresh ──
 //
 // 3s VM-state poll while connected. Detects guest-initiated shutdowns,
-// crashes, libvirt-side changes that virtmanager-rs didn't cause.
+// crashes, libvirt-side changes that kraftwerk didn't cause.
 // 30s interval for networks + pools (state changes rare).
 
 let vmPollTimer = null;
