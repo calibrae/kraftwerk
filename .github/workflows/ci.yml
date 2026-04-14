@@ -77,7 +77,7 @@ jobs:
     # integration runs against prod infra.
     name: integration tests (testhost)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, macOS, speedwagon]
+    runs-on: [self-hosted, macOS, mini]
     steps:
       - uses: actions/checkout@v4
       - name: cargo test --test integration_testhost

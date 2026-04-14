@@ -40,7 +40,7 @@ jobs:
     # in the login keychain, so Tauri's signing finds it automatically.
     # Notarization uses Apple ID + app-specific password from secrets.
     name: macos signed bundle
-    runs-on: [self-hosted, macOS, speedwagon]
+    runs-on: [self-hosted, macOS, mini]
     env:
       APPLE_SIGNING_IDENTITY: 'Developer ID Application: Nico Bousquet (XJQQCN392F)'
       # Notarization via App Store Connect API key. The .p8 private

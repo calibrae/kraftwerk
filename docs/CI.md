@@ -12,7 +12,7 @@ Two workflows live under `.github/workflows/`:
 ## Self-hosted runner on speedwagon
 
 The `integration-testhost` and `build-macos` jobs require a runner with
-labels `self-hosted, macOS, speedwagon`.
+labels `self-hosted, macOS, mini`.
 
 Register (one-time):
 
@@ -24,7 +24,7 @@ mkdir actions-runner-kraftwerk && cd actions-runner-kraftwerk
   --url https://github.com/calibrae/kraftwerk \
   --token <REPO_RUNNER_TOKEN> \
   --name speedwagon-kraftwerk \
-  --labels self-hosted,macOS,speedwagon \
+  --labels self-hosted,macOS,mini \
   --unattended
 ./svc.sh install && ./svc.sh start
 ```
