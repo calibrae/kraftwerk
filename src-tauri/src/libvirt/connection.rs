@@ -251,6 +251,253 @@ impl LibvirtConnection {
         self.define_domain_xml(&xml)
     }
 
+    // ═════════════════════════════════════════════════════════════════════
+    // Round E: virtio-adjacent devices (TPM, RNG, watchdog, panic,
+    // memballoon, vsock, IOMMU).
+    // ═════════════════════════════════════════════════════════════════════
+
+    /// Read all virtio-adjacent devices from the inactive (persistent)
+    /// domain XML. Inactive so edits reflect what takes effect on next
+    /// boot for persistent-only devices.
+    pub fn get_virtio_devices(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::virtio_devices::VirtioDevicesSnapshot, VirtManagerError> {
+        use crate::libvirt::virtio_devices as v;
+        let xml = self.get_domain_xml(name, true)?;
+        Ok(v::VirtioDevicesSnapshot {
+            tpm: v::parse_tpm(&xml)?,
+            rngs: v::parse_rngs(&xml)?,
+            watchdog: v::parse_watchdog(&xml)?,
+            panic: v::parse_panic(&xml)?,
+            balloon: v::parse_balloon(&xml)?,
+            vsock: v::parse_vsock(&xml)?,
+            iommu: v::parse_iommu(&xml)?,
+        })
+    }
+
+    /// Set or remove the TPM. Persistent only — `live` must be false.
+    pub fn set_tpm(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::TpmConfig>,
+        live: bool,
+        _config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if live {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setTpm".into(),
+                reason: "TPM hotplug is not supported; persistent only".into(),
+            });
+        }
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::virtio_devices::apply_set_tpm(&xml, cfg)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Set or remove the watchdog. Persistent only.
+    pub fn set_watchdog(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::WatchdogConfig>,
+        live: bool,
+        _config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if live {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setWatchdog".into(),
+                reason: "watchdog hotplug is not supported; persistent only".into(),
+            });
+        }
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::virtio_devices::apply_set_watchdog(&xml, cfg)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Set or remove the panic notifier. Persistent only.
+    pub fn set_panic(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::PanicConfig>,
+        live: bool,
+        _config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if live {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setPanic".into(),
+                reason: "panic hotplug is not supported; persistent only".into(),
+            });
+        }
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::virtio_devices::apply_set_panic(&xml, cfg)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Set or remove the memballoon. Model/flag changes are persistent;
+    /// stats_period_secs is applied live via virDomainSetMemoryStatsPeriod
+    /// in addition when `live` is true.
+    pub fn set_balloon(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::BalloonConfig>,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if config {
+            let xml = self.get_domain_xml(name, true)?;
+            let new_xml = crate::libvirt::virtio_devices::apply_set_balloon(&xml, cfg)?;
+            self.define_domain_xml(&new_xml)?;
+        }
+        if live {
+            // Only the stats period is hot-settable.
+            if let Some(c) = cfg {
+                if let Some(period) = c.stats_period_secs {
+                    self.with_connection(|conn| {
+                        let domain = Self::lookup_domain(conn, name)?;
+                        // flags=1 = VIR_DOMAIN_AFFECT_LIVE
+                        domain
+                            .set_memory_stats_period(period as i32, 1)
+                            .map(|_| ())
+                            .map_err(|e| VirtManagerError::OperationFailed {
+                                operation: "setMemoryStatsPeriod".into(),
+                                reason: e.to_string(),
+                            })
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Set or remove vsock. Supports live hotplug and/or persistent.
+    pub fn set_vsock(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::VsockConfig>,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if let Some(c) = cfg { c.validate()?; }
+        // Persistent edit first (authoritative).
+        if config {
+            let xml = self.get_domain_xml(name, true)?;
+            let new_xml = crate::libvirt::virtio_devices::apply_set_vsock(&xml, cfg)?;
+            self.define_domain_xml(&new_xml)?;
+        }
+        // Live attach/detach.
+        if live {
+            // Get the current live vsock to know whether we are replacing.
+            let live_xml = self.get_domain_xml(name, false)?;
+            let current = crate::libvirt::virtio_devices::parse_vsock(&live_xml)?;
+            if let Some(old) = &current {
+                let frag = crate::libvirt::virtio_devices::build_vsock_xml(old);
+                let _ = self.detach_device_public(name, &frag, true, false);
+            }
+            if let Some(c) = cfg {
+                let frag = crate::libvirt::virtio_devices::build_vsock_xml(c);
+                self.attach_device_public(name, &frag, true, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Add an RNG device (hotplug or persistent).
+    pub fn add_rng(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::virtio_devices::RngConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let frag = crate::libvirt::virtio_devices::build_rng_xml(cfg);
+        self.attach_device_public(name, &frag, live, config)
+    }
+
+    /// Remove an RNG device matching the config shape (hotplug or persistent).
+    pub fn remove_rng(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::virtio_devices::RngConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let frag = crate::libvirt::virtio_devices::build_rng_xml(cfg);
+        self.detach_device_public(name, &frag, live, config)
+    }
+
+    /// Update an existing RNG device (matches by MAC-equivalent here: the
+    /// serialised XML must match existing rate/backend). Uses
+    /// virDomainUpdateDeviceFlags which is narrower than detach+attach.
+    pub fn update_rng(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::virtio_devices::RngConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let frag = crate::libvirt::virtio_devices::build_rng_xml(cfg);
+        let flags = {
+            let mut f: u32 = 0;
+            if live { f |= 1; }
+            if config { f |= 2; }
+            if f == 0 { f = 2; }
+            f
+        };
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .update_device_flags(&frag, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "updateDevice".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Set or remove IOMMU. Persistent only.
+    pub fn set_iommu(
+        &self,
+        name: &str,
+        cfg: Option<&crate::libvirt::virtio_devices::IommuConfig>,
+        live: bool,
+        _config: bool,
+    ) -> Result<(), VirtManagerError> {
+        if live {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setIommu".into(),
+                reason: "IOMMU hotplug is not supported; persistent only".into(),
+            });
+        }
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::virtio_devices::apply_set_iommu(&xml, cfg)?;
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Public attach_device wrapper used by the virtio methods (and, in
+    /// future, other device editors). Kept distinct from the private
+    /// hostdev-only helper.
+    pub fn attach_device_public(
+        &self,
+        name: &str,
+        xml: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        self.attach_device(name, xml, live, config)
+    }
+
+    pub fn detach_device_public(
+        &self,
+        name: &str,
+        xml: &str,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        self.detach_device(name, xml, live, config)
+    }
+
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.

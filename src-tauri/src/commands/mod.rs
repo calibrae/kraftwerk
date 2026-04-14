@@ -10,5 +10,6 @@ pub mod domain_caps;
 pub mod boot;
 pub mod disks;
 pub mod display;
+pub mod virtio;
 pub mod storage;
 pub mod nics;

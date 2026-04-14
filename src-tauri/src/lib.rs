@@ -17,6 +17,7 @@ use commands::boot as cmd_boot;
 use commands::disks as cmd_disks;
 use commands::nics as cmd_nics;
 use commands::display as cmd_display;
+use commands::virtio as cmd_virtio;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -106,6 +107,16 @@ pub fn run() {
             cmd_nics::update_domain_nic,
             cmd_display::get_display_config,
             cmd_display::apply_display_patch,
+            cmd_virtio::get_virtio_devices,
+            cmd_virtio::set_tpm,
+            cmd_virtio::set_watchdog,
+            cmd_virtio::set_panic,
+            cmd_virtio::set_balloon,
+            cmd_virtio::set_vsock,
+            cmd_virtio::add_rng,
+            cmd_virtio::remove_rng,
+            cmd_virtio::update_rng,
+            cmd_virtio::set_iommu,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
