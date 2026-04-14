@@ -1,0 +1,15 @@
+{
+  "name": "crytter-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "crytter_wasm_bg.wasm",
+    "crytter_wasm.js",
+    "crytter_wasm.d.ts"
+  ],
+  "main": "crytter_wasm.js",
+  "types": "crytter_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

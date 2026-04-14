@@ -69,7 +69,6 @@ jobs:
       - run: npm run check
         continue-on-error: true
       - run: npm run build
-        continue-on-error: true   # top-level-await in capsaicin+novnc makes vite bundling finicky
 
   integration-testhost:
     # Self-hosted runner on speedwagon has SSH access to the testhost

@@ -9,6 +9,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [sveltekit(), wasm()],
 
+  // Tauri targets a modern webview — bump target so top-level await
+  // (used by capsaicin + novnc WASM bootstrap) transpiles cleanly.
+  build: {
+    target: ["es2022", "chrome111", "edge111", "firefox115", "safari16"],
+  },
+
   optimizeDeps: {
     exclude: ["crytter-wasm"],
   },

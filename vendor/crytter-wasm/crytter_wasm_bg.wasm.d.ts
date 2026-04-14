@@ -1,0 +1,38 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_terminal_free: (a: number, b: number) => void;
+export const terminal_blinkCursor: (a: number) => void;
+export const terminal_clearSelection: (a: number) => void;
+export const terminal_cols: (a: number) => number;
+export const terminal_copySelection: (a: number, b: number) => void;
+export const terminal_dumpGrid: (a: number, b: number) => void;
+export const terminal_fit: (a: number) => void;
+export const terminal_getUrlAt: (a: number, b: number, c: number, d: number) => void;
+export const terminal_handleKeyEvent: (a: number, b: number, c: number) => void;
+export const terminal_hasSelection: (a: number) => number;
+export const terminal_isScrolled: (a: number) => number;
+export const terminal_mouseDown: (a: number, b: number, c: number) => void;
+export const terminal_mouseMove: (a: number, b: number, c: number) => void;
+export const terminal_mouseUp: (a: number) => void;
+export const terminal_needsRender: (a: number) => number;
+export const terminal_new: (a: number) => number;
+export const terminal_onTitleChange: (a: number, b: number) => void;
+export const terminal_open: (a: number, b: number) => void;
+export const terminal_refresh: (a: number) => void;
+export const terminal_render: (a: number) => number;
+export const terminal_reset: (a: number) => void;
+export const terminal_resize: (a: number, b: number, c: number) => void;
+export const terminal_rows: (a: number) => number;
+export const terminal_scrollDown: (a: number, b: number) => void;
+export const terminal_scrollToBottom: (a: number) => void;
+export const terminal_scrollUp: (a: number, b: number) => void;
+export const terminal_search: (a: number, b: number, c: number, d: number) => void;
+export const terminal_write: (a: number, b: number, c: number, d: number) => void;
+export const terminal_writeBytes: (a: number, b: number, c: number, d: number) => void;
+export const terminal_getSelection: (a: number, b: number) => void;
+export const __wbindgen_export: (a: number, b: number) => number;
+export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_export3: (a: number) => void;
+export const __wbindgen_add_to_stack_pointer: (a: number) => number;
+export const __wbindgen_export4: (a: number, b: number, c: number) => void;
