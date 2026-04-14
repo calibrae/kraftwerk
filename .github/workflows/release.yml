@@ -43,9 +43,13 @@ jobs:
     runs-on: [self-hosted, macOS, speedwagon]
     env:
       APPLE_SIGNING_IDENTITY: 'Developer ID Application: Nico Bousquet (XJQQCN392F)'
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Notarization via App Store Connect API key. The .p8 private
+      # key lives on the runner at ~/.privatekeys/AuthKey_<KEY_ID>.p8;
+      # only the issuer UUID is a repo secret.
+      APPLE_API_KEY: Z43Q26MB7Y
+      APPLE_API_KEY_PATH: /Users/cali/.privatekeys/AuthKey_Z43Q26MB7Y.p8
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_TEAM_ID: XJQQCN392F
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

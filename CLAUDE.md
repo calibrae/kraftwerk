@@ -100,3 +100,46 @@ npm run tauri build
 
 - No `Co-Authored-By` in commits
 - Descriptive but concise commit messages
+
+## Vault (Secrets Management)
+HashiCorp Vault on mista (10.10.0.3:8200) stores all infra secrets.
+
+### Access
+- **URL**: `http://10.10.0.3:8200`
+- **Read-only token**: in `$VAULT_TOKEN` env var on speedwagon
+- **Read-write token**: stored at `~/.vault/rw_token` on speedwagon (never commit)
+- **Paths**: `secret/data/infra/*` and `secret/data/nxp/*`
+
+### Reading a secret
+```bash
+curl -s -H "X-Vault-Token: $VAULT_TOKEN" http://10.10.0.3:8200/v1/secret/data/infra/<name> | jq '.data.data'
+```
+
+### Relevant secrets for Kraftwerk
+- `secret/infra/default` — default password for all machines
+- `secret/infra/example-firewall` — OPNsense API keys
+- `secret/infra/telegram` — bot tokens + chat ID
+- `secret/infra/hass` — Home Assistant token
+- `secret/infra/mqtt` — MQTT credentials
+- `secret/infra/gitea` — Gitea API token
+- `secret/infra/unifi-ap` — UniFi AP SSH credentials
+
+### Hypervisor connections
+Kraftwerk manages VMs on:
+- **polnareff** (10.10.0.7) — KVM/libvirt, 9 VMs, Terraform-managed
+- **testhost** (192.0.2.1) — KVM/libvirt, manual VMs (HASS, brokers, UniFi, OPNsense)
+- **doppio** (10.10.0.12) — KVM/libvirt, Fedora 43, GPU passthrough (mira Windows VM)
+
+SSH credentials for all hypervisors are in Vault at `secret/infra/default`. User `cali`, key `~/.ssh/cali_net_rsa`.
+
+### In Rust
+Use `reqwest` to call Vault API:
+```rust
+let token = std::env::var("VAULT_TOKEN")?;
+let resp: serde_json::Value = reqwest::Client::new()
+    .get("http://10.10.0.3:8200/v1/secret/data/infra/default")
+    .header("X-Vault-Token", &token)
+    .send().await?
+    .json().await?;
+let password = resp["data"]["data"]["password"].as_str().unwrap();
+```
