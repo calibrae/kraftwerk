@@ -12,6 +12,7 @@ use commands::vm_creation;
 use commands::vnc;
 use commands::spice;
 use commands::hostdev;
+use commands::domain_caps as cmd_domain_caps;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,6 +89,7 @@ pub fn run() {
             hostdev::list_domain_hostdevs,
             hostdev::attach_hostdev,
             hostdev::detach_hostdev,
+            cmd_domain_caps::get_domain_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

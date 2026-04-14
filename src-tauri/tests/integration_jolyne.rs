@@ -1199,3 +1199,28 @@ fn test_list_domain_hostdevs_on_fedora() {
         }
     }
 }
+
+// ─── Domain capabilities ───
+
+#[test]
+fn test_get_domain_capabilities_testhost() {
+    let conn = connect_testhost();
+    let caps = conn.get_domain_capabilities(None, None, None, None)
+        .expect("get_domain_capabilities");
+    // testhost is x86_64 KVM
+    assert_eq!(caps.arch, "x86_64");
+    assert_eq!(caps.domain_type, "kvm");
+    assert!(caps.max_vcpus > 0, "max_vcpus should be reported");
+    // host-passthrough is always there on a KVM host
+    assert!(caps.cpu.modes_supported.iter().any(|m| m == "host-passthrough"));
+    // Must advertise at least virtio + sata disk buses
+    assert!(caps.devices.disk_buses.contains(&"virtio".to_string()));
+    // VNC + SPICE both supported
+    assert!(caps.devices.graphics_types.contains(&"vnc".to_string()));
+    assert!(caps.devices.graphics_types.contains(&"spice".to_string()));
+    println!(
+        "caps: arch={} machine={} maxVcpu={} buses={:?} gfx={:?}",
+        caps.arch, caps.machine, caps.max_vcpus,
+        caps.devices.disk_buses, caps.devices.graphics_types
+    );
+}

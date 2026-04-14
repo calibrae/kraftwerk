@@ -165,6 +165,28 @@ impl LibvirtConnection {
     }
 
 
+
+    /// Query domain capabilities for the given (emulator, arch, machine, virttype).
+    /// All parameters can be empty strings — libvirt fills in sensible defaults
+    /// for the host.
+    pub fn get_domain_capabilities(
+        &self,
+        emulator: Option<&str>,
+        arch: Option<&str>,
+        machine: Option<&str>,
+        virttype: Option<&str>,
+    ) -> Result<crate::libvirt::domain_caps::DomainCaps, VirtManagerError> {
+        self.with_connection(|conn| {
+            let xml = conn
+                .get_domain_capabilities(emulator, arch, machine, virttype, 0)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "getDomainCapabilities".into(),
+                    reason: e.to_string(),
+                })?;
+            crate::libvirt::domain_caps::parse(&xml)
+        })
+    }
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.
