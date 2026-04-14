@@ -14,6 +14,7 @@ use commands::spice;
 use commands::hostdev;
 use commands::domain_caps as cmd_domain_caps;
 use commands::boot as cmd_boot;
+use commands::virtio as cmd_virtio;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +94,16 @@ pub fn run() {
             cmd_domain_caps::get_domain_capabilities,
             cmd_boot::get_boot_config,
             cmd_boot::apply_boot_patch,
+            cmd_virtio::get_virtio_devices,
+            cmd_virtio::set_tpm,
+            cmd_virtio::set_watchdog,
+            cmd_virtio::set_panic,
+            cmd_virtio::set_balloon,
+            cmd_virtio::set_vsock,
+            cmd_virtio::add_rng,
+            cmd_virtio::remove_rng,
+            cmd_virtio::update_rng,
+            cmd_virtio::set_iommu,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

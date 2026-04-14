@@ -1293,3 +1293,152 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round E: virtio-adjacent devices ───────────────────────────────────
+
+/// Guard: always restore the panic notifier to its pre-test state on
+/// drop, even on test failure / panic.
+struct PanicGuard<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    before: Option<virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig>,
+}
+impl<'a> Drop for PanicGuard<'a> {
+    fn drop(&mut self) {
+        let _ = self.conn.set_panic(self.vm, self.before.as_ref(), false, true);
+    }
+}
+
+/// Guard: always remove any leftover RNG device we added during a test.
+struct RngGuard<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    cfg: virtmanager_rs_lib::libvirt::virtio_devices::RngConfig,
+    live: bool,
+    config: bool,
+    armed: bool,
+}
+impl<'a> RngGuard<'a> {
+    fn disarm(mut self) { self.armed = false; }
+}
+impl<'a> Drop for RngGuard<'a> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.conn.remove_rng(self.vm, &self.cfg, self.live, self.config);
+        }
+    }
+}
+
+#[test]
+fn test_get_virtio_devices_on_fedora() {
+    let conn = connect_testhost();
+    let snap = conn
+        .get_virtio_devices("fedora-workstation")
+        .expect("get_virtio_devices");
+    println!(
+        "fedora-workstation virtio: tpm={} rngs={} watchdog={} panic={} balloon={} vsock={} iommu={}",
+        snap.tpm.is_some(),
+        snap.rngs.len(),
+        snap.watchdog.is_some(),
+        snap.panic.is_some(),
+        snap.balloon.is_some(),
+        snap.vsock.is_some(),
+        snap.iommu.is_some(),
+    );
+    // fedora-workstation was sampled with itco watchdog + virtio balloon + virtio rng.
+    assert!(snap.balloon.is_some(), "should have a memballoon");
+    assert!(!snap.rngs.is_empty(), "should have at least one RNG");
+}
+
+#[test]
+fn test_panic_notifier_round_trip_persistent() {
+    let conn = connect_testhost();
+    let before = conn
+        .get_virtio_devices("fedora-workstation")
+        .expect("snapshot")
+        .panic;
+
+    let _guard = PanicGuard {
+        conn: &conn,
+        vm: "fedora-workstation",
+        before: before.clone(),
+    };
+
+    let want = virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig {
+        model: "pvpanic".into(),
+    };
+    conn.set_panic("fedora-workstation", Some(&want), false, true)
+        .expect("set_panic");
+
+    let mid = conn
+        .get_virtio_devices("fedora-workstation")
+        .expect("snapshot");
+    assert_eq!(mid.panic.as_ref().map(|p| p.model.clone()), Some("pvpanic".into()));
+
+    // Clear, re-check.
+    conn.set_panic("fedora-workstation", None, false, true)
+        .expect("clear_panic");
+    let after = conn
+        .get_virtio_devices("fedora-workstation")
+        .expect("snapshot");
+    assert!(after.panic.is_none(), "panic should be removed");
+    // Guard restores `before` on drop.
+}
+
+#[test]
+fn test_rng_hotplug_round_trip() {
+    let conn = connect_testhost();
+
+    // fedora-workstation must be running for hotplug to be meaningful.
+    // Skip if not running — the assertion confirms it's reachable.
+    let vm = conn
+        .list_all_domains()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.name == "fedora-workstation");
+    let Some(vm) = vm else { return; };
+    if vm.state != VmState::Running {
+        println!("fedora-workstation not running ({:?}); skipping hotplug", vm.state);
+        return;
+    }
+
+    // Distinctive shape: builtin backend (no source path) so we can
+    // tell it apart from the default /dev/urandom one.
+    let cfg = virtmanager_rs_lib::libvirt::virtio_devices::RngConfig {
+        model: "virtio".into(),
+        backend_model: "builtin".into(),
+        source_path: None,
+        rate_period_ms: None,
+        rate_bytes: None,
+    };
+
+    let before = conn.get_virtio_devices("fedora-workstation").unwrap();
+    let before_count = before.rngs.len();
+
+    let mut guard = RngGuard {
+        conn: &conn,
+        vm: "fedora-workstation",
+        cfg: cfg.clone(),
+        live: true,
+        config: true,
+        armed: true,
+    };
+
+    conn.add_rng("fedora-workstation", &cfg, true, true)
+        .expect("add_rng");
+
+    let mid = conn.get_virtio_devices("fedora-workstation").unwrap();
+    assert!(
+        mid.rngs.iter().any(|r| r.backend_model == "builtin"),
+        "new builtin RNG should be present"
+    );
+    assert_eq!(mid.rngs.len(), before_count + 1);
+
+    conn.remove_rng("fedora-workstation", &cfg, true, true)
+        .expect("remove_rng");
+    guard.armed = false;
+    let _ = guard; // drop silently; nothing to undo.
+
+    let after = conn.get_virtio_devices("fedora-workstation").unwrap();
+    assert_eq!(after.rngs.len(), before_count, "RNG count should match original");
+}

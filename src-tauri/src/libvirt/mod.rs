@@ -5,6 +5,7 @@ pub mod domain_stats;
 pub mod hostdev;
 pub mod domain_caps;
 pub mod boot_config;
+pub mod virtio_devices;
 pub mod domain_builder;
 pub mod network_config;
 pub mod storage_config;
