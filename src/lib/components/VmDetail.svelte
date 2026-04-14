@@ -6,6 +6,7 @@
   import BootPanel from "./BootPanel.svelte";
   import DisksPanel from "./DisksPanel.svelte";
   import NicsPanel from "./NicsPanel.svelte";
+  import DisplayPanel from "./DisplayPanel.svelte";
   import VmOverview from "./VmOverview.svelte";
 
   const appState = getState();
@@ -173,6 +174,7 @@
       <button class="tab" class:active={activeTab === "disks"} onclick={() => activeTab = "disks"}>Disks</button>
       <button class="tab" class:active={activeTab === "network"} onclick={() => activeTab = "network"}>Network</button>
       <button class="tab" class:active={activeTab === "boot"} onclick={() => activeTab = "boot"}>Boot</button>
+      <button class="tab" class:active={activeTab === "display"} onclick={() => activeTab = "display"}>Display</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
@@ -189,6 +191,8 @@
         <NicsPanel vmName={vm.name} />
       {:else if activeTab === "boot"}
         <BootPanel vmName={vm.name} />
+      {:else if activeTab === "display"}
+        <DisplayPanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <div class="vm-xml-section">
           <div class="xml-header">

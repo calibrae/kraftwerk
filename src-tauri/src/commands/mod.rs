@@ -9,5 +9,6 @@ pub mod hostdev;
 pub mod domain_caps;
 pub mod boot;
 pub mod disks;
+pub mod display;
 pub mod storage;
 pub mod nics;
