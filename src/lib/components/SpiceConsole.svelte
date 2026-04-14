@@ -411,6 +411,8 @@
   }
 
   async function mouseDown(ev) {
+    // Always claim focus so keyboard events land here.
+    wrapperEl?.focus();
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
     if (mouseMode === "server" && connected && !grabbed) {
@@ -595,19 +597,22 @@
   .canvas-wrap.client-mode { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.3); }
 
   .canvas-stack {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
     position: relative;
-    max-width: 100%; max-height: 100%;
-    display: inline-block;
   }
-  canvas {
-    display: block;
-    max-width: 100%; max-height: 100%;
+  .canvas-stack > canvas {
+    grid-area: 1 / 1;
+    max-width: 100%;
+    max-height: 100%;
     image-rendering: crisp-edges;
+    display: block;
   }
-  .cursor-overlay {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
+  .canvas-stack > .cursor-overlay {
     pointer-events: none;
   }
 
