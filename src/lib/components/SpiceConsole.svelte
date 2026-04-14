@@ -45,6 +45,11 @@
   let hasFocus = $state(false);
   let grabbed = $state(false);
 
+  // Display scaling: "actual" shows 1:1 with scrollbars when oversized;
+  // "fit" shrinks the canvas to stay within the viewport. Default to actual
+  // so nothing is downscaled — most guests fit inside the 1600x1000 window.
+  let scaleMode = $state("actual"); // "actual" | "fit"
+
   // Cursor state.
   const cursorCache = new Map(); // unique (string) -> { w, h, hotX, hotY, pixels: Uint8ClampedArray (RGBA) }
   let cursorShown = $state(false);
@@ -477,6 +482,15 @@
       {/if}
     </span>
     <div class="actions">
+      {#if connected}
+        <button
+          class="btn"
+          onclick={() => scaleMode = scaleMode === "fit" ? "actual" : "fit"}
+          title="Toggle between 1:1 pixel-perfect (actual) and fit-to-window"
+        >
+          {scaleMode === "fit" ? "1:1" : "Fit"}
+        </button>
+      {/if}
       {#if connected && mouseMode === "server"}
         {#if grabbed}
           <button class="btn" onclick={release} title="Release pointer grab">Release</button>
@@ -508,6 +522,8 @@
     class:grabbed
     class:focused={hasFocus}
     class:client-mode={mouseMode === "client"}
+    class:scale-fit={scaleMode === "fit"}
+    class:scale-actual={scaleMode === "actual"}
     bind:this={wrapperEl}
     tabindex="0"
     onfocus={onWrapperFocus}
@@ -587,11 +603,25 @@
   }
 
   .canvas-wrap {
-    flex: 1; overflow: hidden; background: #000; position: relative;
-    display: flex; align-items: center; justify-content: center;
+    flex: 1; background: #000; position: relative;
     outline: none;
     cursor: default;
   }
+  .canvas-wrap.scale-fit {
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .canvas-wrap.scale-actual {
+    overflow: auto;
+    display: block;
+  }
+  /* Thin native-feeling scrollbars in actual mode (WebKit). */
+  .canvas-wrap.scale-actual::-webkit-scrollbar { width: 10px; height: 10px; }
+  .canvas-wrap.scale-actual::-webkit-scrollbar-track { background: #0a0a18; }
+  .canvas-wrap.scale-actual::-webkit-scrollbar-thumb {
+    background: #2d2d55; border-radius: 5px; border: 2px solid #0a0a18;
+  }
+  .canvas-wrap.scale-actual::-webkit-scrollbar-thumb:hover { background: #3d3d75; }
   .canvas-wrap.focused { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.4); }
   .canvas-wrap.grabbed { box-shadow: inset 0 0 0 2px rgba(52, 211, 153, 0.7); }
   .canvas-wrap.client-mode { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.3); }
@@ -599,18 +629,28 @@
   .canvas-stack {
     display: grid;
     place-items: center;
-    width: 100%;
-    height: 100%;
+    position: relative;
     min-width: 0;
     min-height: 0;
-    position: relative;
+  }
+  .scale-fit .canvas-stack {
+    width: 100%;
+    height: 100%;
+  }
+  .scale-actual .canvas-stack {
+    /* Size to the canvas's intrinsic width/height so overflow: auto on
+       the parent engages scrollbars when the guest exceeds the viewport. */
+    width: max-content;
+    height: max-content;
   }
   .canvas-stack > canvas {
     grid-area: 1 / 1;
-    max-width: 100%;
-    max-height: 100%;
     image-rendering: crisp-edges;
     display: block;
+  }
+  .scale-fit .canvas-stack > canvas {
+    max-width: 100%;
+    max-height: 100%;
   }
   .canvas-stack > .cursor-overlay {
     pointer-events: none;
