@@ -1293,3 +1293,160 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round G: filesystem passthrough + shmem ───
+//
+// Live hypervisor: testhost (libvirt 10.x, QEMU 8.x).
+// Test VM: fedora-workstation. These tests MUTATE the persistent
+// definition - the Drop guard at the end of each test must restore
+// <memoryBacking> (and remove any leftover filesystem) even on panic,
+// so a failed assertion doesn't leave fedora-workstation unbootable on
+// next boot.
+
+use virtmanager_rs_lib::libvirt::filesystem_config as fsc;
+
+/// RAII cleanup. On drop, removes any leftover virtiofs filesystem
+/// matching `target_dir` and strips the <memoryBacking> block we added.
+struct RoundGCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    target_dir: String,
+    restore_memory_backing: bool,
+}
+
+impl Drop for RoundGCleanup<'_> {
+    fn drop(&mut self) {
+        // Best-effort cleanup; we're already on a panic path potentially,
+        // so swallow errors.
+        let _ = self.conn.remove_filesystem(self.vm, &self.target_dir, false, true);
+        if self.restore_memory_backing {
+            let _ = self.conn.remove_memory_backing(self.vm);
+        }
+    }
+}
+
+#[test]
+fn test_list_filesystems_empty_on_fedora() {
+    let conn = connect_testhost();
+    let fs = conn.list_filesystems(TEST_VM).expect("list_filesystems");
+    // fedora-workstation has no <filesystem> entries by default.
+    println!("fedora-workstation has {} filesystem entries", fs.len());
+    for f in &fs {
+        println!(
+            "  {:?} {} -> {}",
+            f.driver_type, f.source_dir, f.target_dir
+        );
+    }
+}
+
+#[test]
+fn test_list_shmems_empty_on_fedora() {
+    let conn = connect_testhost();
+    let shs = conn.list_shmems(TEST_VM).expect("list_shmems");
+    println!("fedora-workstation has {} shmem entries", shs.len());
+    assert!(
+        shs.is_empty(),
+        "expected no shmem entries on fedora-workstation"
+    );
+}
+
+#[test]
+fn test_virtiofs_add_remove_round_trip_on_fedora() {
+    let conn = connect_testhost();
+
+    // Record whether memoryBacking was present before we touched it -
+    // the cleanup guard uses this to decide whether to strip it.
+    let had_memory_backing_before = {
+        let xml = conn.get_domain_xml(TEST_VM, true).unwrap();
+        fsc::has_shared_memory_backing(&xml)
+    };
+
+    let target_dir = "virtmgr_rs_testshare".to_string();
+
+    // Guard is armed before any mutation so a panic in the middle of
+    // the test still triggers cleanup.
+    let _guard = RoundGCleanup {
+        conn: &conn,
+        vm: TEST_VM,
+        target_dir: target_dir.clone(),
+        restore_memory_backing: !had_memory_backing_before,
+    };
+
+    // Defensive pre-clean: if a previous aborted test left a stale
+    // entry with the same tag, drop it now.
+    let pre = conn.list_filesystems(TEST_VM).unwrap();
+    if pre.iter().any(|f| f.target_dir == target_dir) {
+        let _ = conn.remove_filesystem(TEST_VM, &target_dir, false, true);
+    }
+
+    // Add a virtiofs share pointing to /tmp with target tag testshare.
+    // Persistent-only - the running VM can't hot-plug virtiofs without
+    // shared memory backing being present at start-up.
+    let fs = fsc::FilesystemConfig::virtiofs("/tmp", &target_dir);
+    conn.add_filesystem(TEST_VM, &fs, /*force_mb*/ true, /*live*/ false, /*config*/ true)
+        .expect("add_filesystem (virtiofs)");
+
+    // Verify the entry is now in the persistent XML.
+    let after = conn.list_filesystems(TEST_VM).unwrap();
+    let found = after.iter().find(|f| f.target_dir == target_dir);
+    assert!(found.is_some(), "virtiofs filesystem should be present after add");
+    let found = found.unwrap();
+    assert_eq!(found.driver_type, fsc::FilesystemDriver::Virtiofs);
+    assert_eq!(found.source_dir, "/tmp");
+
+    // Verify shared memoryBacking is now present.
+    let xml_after = conn.get_domain_xml(TEST_VM, true).unwrap();
+    assert!(
+        fsc::has_shared_memory_backing(&xml_after),
+        "shared memoryBacking should be present after virtiofs add"
+    );
+
+    // Remove it.
+    conn.remove_filesystem(TEST_VM, &target_dir, false, true)
+        .expect("remove_filesystem");
+    let after = conn.list_filesystems(TEST_VM).unwrap();
+    assert!(
+        !after.iter().any(|f| f.target_dir == target_dir),
+        "filesystem should be gone after remove"
+    );
+
+    // Guard's Drop will restore memoryBacking if it wasn't present before.
+}
+
+#[test]
+fn test_enable_shared_memory_backing_is_idempotent() {
+    let conn = connect_testhost();
+    let had_before = fsc::has_shared_memory_backing(
+        &conn.get_domain_xml(TEST_VM, true).unwrap(),
+    );
+
+    // Cleanup guard: if we flip it on, turn it off again at the end.
+    struct Cleanup<'a> {
+        conn: &'a LibvirtConnection,
+        vm: &'a str,
+        restore: bool,
+    }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            if self.restore {
+                let _ = self.conn.remove_memory_backing(self.vm);
+            }
+        }
+    }
+    let _guard = Cleanup {
+        conn: &conn,
+        vm: TEST_VM,
+        restore: !had_before,
+    };
+
+    conn.enable_shared_memory_backing(TEST_VM)
+        .expect("enable_shared_memory_backing");
+    assert!(fsc::has_shared_memory_backing(
+        &conn.get_domain_xml(TEST_VM, true).unwrap()
+    ));
+    // Second call: noop.
+    conn.enable_shared_memory_backing(TEST_VM)
+        .expect("enable_shared_memory_backing (2nd call)");
+    let xml = conn.get_domain_xml(TEST_VM, true).unwrap();
+    assert_eq!(xml.matches("<memoryBacking").count(), 1);
+}

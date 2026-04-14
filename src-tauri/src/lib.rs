@@ -14,6 +14,7 @@ use commands::spice;
 use commands::hostdev;
 use commands::domain_caps as cmd_domain_caps;
 use commands::boot as cmd_boot;
+use commands::filesystem as cmd_filesystem;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +94,14 @@ pub fn run() {
             cmd_domain_caps::get_domain_capabilities,
             cmd_boot::get_boot_config,
             cmd_boot::apply_boot_patch,
+            cmd_filesystem::list_filesystems,
+            cmd_filesystem::add_filesystem,
+            cmd_filesystem::remove_filesystem,
+            cmd_filesystem::update_filesystem,
+            cmd_filesystem::list_shmems,
+            cmd_filesystem::add_shmem,
+            cmd_filesystem::remove_shmem,
+            cmd_filesystem::enable_shared_memory_backing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
