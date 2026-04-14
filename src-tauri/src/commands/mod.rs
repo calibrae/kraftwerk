@@ -5,4 +5,5 @@ pub mod network;
 pub mod vm_creation;
 pub mod vnc;
 pub mod spice;
+pub mod hostdev;
 pub mod storage;

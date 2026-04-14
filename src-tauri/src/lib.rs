@@ -11,6 +11,7 @@ use commands::network;
 use commands::vm_creation;
 use commands::vnc;
 use commands::spice;
+use commands::hostdev;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -81,6 +82,12 @@ pub fn run() {
             spice::open_spice,
             spice::close_spice,
             spice::spice_input,
+            // Host device passthrough
+            hostdev::list_host_pci_devices,
+            hostdev::list_host_usb_devices,
+            hostdev::list_domain_hostdevs,
+            hostdev::attach_hostdev,
+            hostdev::detach_hostdev,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

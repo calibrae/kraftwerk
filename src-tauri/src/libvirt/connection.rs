@@ -189,6 +189,122 @@ impl LibvirtConnection {
         self.with_connection(|conn| crate::libvirt::domain_stats::sample(conn, name))
     }
 
+
+    // -- Host device enumeration --
+
+    /// Enumerate PCI devices on the hypervisor host.
+    pub fn list_host_pci_devices(
+        &self,
+    ) -> Result<Vec<crate::libvirt::hostdev::HostPciDevice>, VirtManagerError> {
+        use virt::sys::VIR_CONNECT_LIST_NODE_DEVICES_CAP_PCI_DEV;
+        self.with_connection(|conn| {
+            let devs = conn
+                .list_all_node_devices(VIR_CONNECT_LIST_NODE_DEVICES_CAP_PCI_DEV)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "listHostPciDevices".into(),
+                    reason: e.to_string(),
+                })?;
+            let mut out = Vec::with_capacity(devs.len());
+            for d in &devs {
+                if let Ok(xml) = d.get_xml_desc(0) {
+                    if let Ok(parsed) = crate::libvirt::hostdev::parse_pci_node_device(&xml) {
+                        out.push(parsed);
+                    }
+                }
+            }
+            // Sort stable by BDF for a predictable UI.
+            out.sort_by_key(|d| (d.domain, d.bus, d.slot, d.function));
+            Ok(out)
+        })
+    }
+
+    /// Enumerate USB devices on the hypervisor host.
+    pub fn list_host_usb_devices(
+        &self,
+    ) -> Result<Vec<crate::libvirt::hostdev::HostUsbDevice>, VirtManagerError> {
+        use virt::sys::VIR_CONNECT_LIST_NODE_DEVICES_CAP_USB_DEV;
+        self.with_connection(|conn| {
+            let devs = conn
+                .list_all_node_devices(VIR_CONNECT_LIST_NODE_DEVICES_CAP_USB_DEV)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "listHostUsbDevices".into(),
+                    reason: e.to_string(),
+                })?;
+            let mut out = Vec::with_capacity(devs.len());
+            for d in &devs {
+                if let Ok(xml) = d.get_xml_desc(0) {
+                    if let Ok(parsed) = crate::libvirt::hostdev::parse_usb_node_device(&xml) {
+                        out.push(parsed);
+                    }
+                }
+            }
+            out.sort_by_key(|d| (d.bus, d.device));
+            Ok(out)
+        })
+    }
+
+    /// List the PCI/USB passthrough entries currently attached to a domain.
+    pub fn list_domain_hostdevs(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::hostdev::HostDevice>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, false)?;
+        crate::libvirt::hostdev::parse_hostdevs(&xml)
+    }
+
+    /// Attach a hostdev entry to a domain, live and/or persistent.
+    pub fn attach_hostdev(
+        &self,
+        name: &str,
+        dev: &crate::libvirt::hostdev::HostDevice,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let xml = crate::libvirt::hostdev::build_hostdev_xml(dev);
+        self.attach_device(name, &xml, live, config)
+    }
+
+    /// Detach a hostdev entry from a domain.
+    pub fn detach_hostdev(
+        &self,
+        name: &str,
+        dev: &crate::libvirt::hostdev::HostDevice,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let xml = crate::libvirt::hostdev::build_hostdev_xml(dev);
+        self.detach_device(name, &xml, live, config)
+    }
+
+    /// Generic attach_device wrapper. Kept narrow — hostdev only for now.
+    fn attach_device(&self, name: &str, xml: &str, live: bool, config: bool) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .attach_device_flags(xml, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "attachDevice".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    fn detach_device(&self, name: &str, xml: &str, live: bool, config: bool) -> Result<(), VirtManagerError> {
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .detach_device_flags(xml, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "detachDevice".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
     /// Open a console session for a domain. The on_data callback receives
     /// bytes from the VM's serial console on a background thread.
     pub fn with_console<F>(

@@ -2,6 +2,7 @@
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
+  import HardwarePanel from "./HardwarePanel.svelte";
   import VmOverview from "./VmOverview.svelte";
 
   const appState = getState();
@@ -165,6 +166,7 @@
     <div class="tab-bar">
       <button class="tab" class:active={activeTab === "overview"} onclick={() => activeTab = "overview"}>Overview</button>
       <button class="tab" class:active={activeTab === "config"} onclick={() => activeTab = "config"}>Configuration</button>
+      <button class="tab" class:active={activeTab === "hardware"} onclick={() => activeTab = "hardware"}>Hardware</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
@@ -173,6 +175,8 @@
         <VmOverview vmName={vm.name} running={vm.state === "running"} />
       {:else if activeTab === "config"}
         <VmConfigPanel vmName={vm.name} />
+      {:else if activeTab === "hardware"}
+        <HardwarePanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <div class="vm-xml-section">
           <div class="xml-header">

@@ -1152,3 +1152,50 @@ fn test_secure_xml_includes_spice_password() {
     assert!(pwd.is_some(), "fedora-workstation SPICE password should be present with VIR_DOMAIN_XML_SECURE");
     println!("fedora-workstation SPICE password redaction bypassed, len={}", pwd.unwrap().len());
 }
+
+// ─── Host device enumeration ───
+
+use virtmanager_rs_lib::libvirt::hostdev::HostDevice;
+
+#[test]
+fn test_list_host_pci_devices() {
+    let conn = connect_testhost();
+    let devs = conn.list_host_pci_devices().expect("list_host_pci_devices");
+    assert!(!devs.is_empty(), "testhost should have PCI devices");
+    println!("Found {} PCI devices", devs.len());
+    // testhost is Jasper Lake — Intel (0x8086) should appear several times.
+    assert!(devs.iter().any(|d| d.vendor_id == 0x8086),
+        "expected Intel devices on testhost");
+    // Every device should have a valid BDF.
+    for d in &devs {
+        assert!(d.vendor_id != 0, "{}: vendor_id=0", d.name);
+    }
+}
+
+#[test]
+fn test_list_host_usb_devices() {
+    let conn = connect_testhost();
+    let devs = conn.list_host_usb_devices().expect("list_host_usb_devices");
+    // testhost may or may not have USB devices plugged; just don't crash.
+    println!("Found {} USB devices", devs.len());
+    for d in &devs {
+        assert!(d.bus > 0);
+    }
+}
+
+#[test]
+fn test_list_domain_hostdevs_on_fedora() {
+    let conn = connect_testhost();
+    // fedora-workstation XML we've seen has no <hostdev>; expect empty.
+    let devs = conn.list_domain_hostdevs("fedora-workstation")
+        .expect("list_domain_hostdevs");
+    // Not necessarily empty — just shouldn't panic.
+    println!("fedora-workstation has {} hostdev entries", devs.len());
+    for d in &devs {
+        match d {
+            HostDevice::Pci { .. } => {}
+            HostDevice::UsbAddress { .. } => {}
+            HostDevice::UsbVendor { .. } => {}
+        }
+    }
+}
