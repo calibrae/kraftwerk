@@ -299,3 +299,53 @@ export async function resizeVolume(poolName, path, capacityBytes) {
   try { error = null; await invoke("resize_volume", { path, capacityBytes }); await refreshVolumes(poolName); }
   catch (e) { error = e; throw e; }
 }
+
+
+// ── Auto-refresh ──
+//
+// 3s VM-state poll while connected. Detects guest-initiated shutdowns,
+// crashes, libvirt-side changes that virtmanager-rs didn't cause.
+// 30s interval for networks + pools (state changes rare).
+
+let vmPollTimer = null;
+let slowPollTimer = null;
+let inFlight = false;
+
+export function startAutoPolls() {
+  stopAutoPolls();
+  vmPollTimer = setInterval(async () => {
+    if (inFlight || !selectedConnectionId) return;
+    if (connectionStates[selectedConnectionId]?.status !== "connected") return;
+    inFlight = true;
+    try {
+      const fresh = await invoke("list_domains");
+      // Only assign if something actually changed, so we don't trigger
+      // unnecessary reactive updates.
+      if (JSON.stringify(fresh) !== JSON.stringify(vms)) {
+        vms = fresh;
+      }
+    } catch (_) {
+      // ignore transient errors; next tick will retry
+    } finally {
+      inFlight = false;
+    }
+  }, 3000);
+
+  slowPollTimer = setInterval(async () => {
+    if (!selectedConnectionId) return;
+    if (connectionStates[selectedConnectionId]?.status !== "connected") return;
+    try {
+      const [n, p] = await Promise.all([
+        invoke("list_networks").catch(() => networks),
+        invoke("list_storage_pools").catch(() => pools),
+      ]);
+      if (JSON.stringify(n) !== JSON.stringify(networks)) networks = n;
+      if (JSON.stringify(p) !== JSON.stringify(pools)) pools = p;
+    } catch (_) {}
+  }, 30000);
+}
+
+export function stopAutoPolls() {
+  if (vmPollTimer) { clearInterval(vmPollTimer); vmPollTimer = null; }
+  if (slowPollTimer) { clearInterval(slowPollTimer); slowPollTimer = null; }
+}
