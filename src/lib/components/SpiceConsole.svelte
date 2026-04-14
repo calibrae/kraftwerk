@@ -3,12 +3,19 @@
    * SPICE console rendered via capsaicin-client in the Rust backend.
    *
    * Event flow:
-   *   Rust: capsaicin SpiceClient -> `spice:event` Tauri events -> us
-   *   Us:   mouse/keyboard -> `spice_input` command -> capsaicin
+   *   Rust capsaicin SpiceClient -> `spice:event` Tauri events -> queue
+   *   rAF tick drains the queue and issues one batched paint per frame.
    *
-   * Rendering: one HTML canvas per surface. Pixels arrive as base64 BGRA
-   * strips (stride may differ from width*4 → we blit row-by-row in that
-   * case). CopyRect uses `drawImage` from the canvas onto itself.
+   * See capsaicin/inbox/virtmanager-rs-display-events.md for the full
+   * handling checklist. TL;DR:
+   *   - SurfaceCreated allocates a persistent framebuffer (with size cap)
+   *   - Region{Raw} honours stride (rows may be padded)
+   *   - Region{SolidColor} is a per-row fill
+   *   - StreamFrame blits identically to Region{Raw}
+   *   - CopyRect handles overlapping src/dest (canvas drawImage from
+   *     same canvas is spec-guaranteed memmove-safe)
+   *   - Mark is a present trigger (we rAF-batch instead)
+   *   - Reset wipes the framebuffer
    */
   import { onMount, onDestroy, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -16,18 +23,29 @@
 
   let { vmName, onClose } = $props();
 
+  // Hostile-server guard: cap at 16384×16384 / 256 MiB (same as capsaicin-cli).
+  const MAX_DIM = 16384;
+  const MAX_PIXELS = 64 * 1024 * 1024; // 256 MiB of BGRA
+
   let canvasEl = $state(null);
   let wrapperEl = $state(null);
   let connected = $state(false);
   let error = $state(null);
   let surfaceInfo = $state(null);  // {width, height, format}
+  let streamCount = $state(0);
   let ctx = null;
   let unlisten = null;
   let aborted = false;
 
+  // Coalescing: events accumulate in this queue, a single rAF flushes.
+  const eventQueue = [];
+  let rafHandle = null;
+  // Exposed for future debugging
+  let debugLog = false;
+
   onMount(async () => {
     try {
-      unlisten = await listen("spice:event", (e) => handleEvent(e.payload));
+      unlisten = await listen("spice:event", (e) => enqueue(e.payload));
       await invoke("open_spice", { name: vmName });
       connected = true;
     } catch (e) {
@@ -37,25 +55,40 @@
 
   onDestroy(async () => {
     aborted = true;
+    if (rafHandle) cancelAnimationFrame(rafHandle);
     if (unlisten) unlisten();
     try { await invoke("close_spice"); } catch (_) {}
   });
 
-  async function handleEvent(e) {
+  function enqueue(evt) {
     if (aborted) return;
+    eventQueue.push(evt);
+    if (rafHandle == null) {
+      rafHandle = requestAnimationFrame(flush);
+    }
+  }
+
+  async function flush() {
+    rafHandle = null;
+    const batch = eventQueue.splice(0, eventQueue.length);
+    for (const evt of batch) {
+      await handleEvent(evt);
+    }
+    // If events arrived while we were handling the batch, schedule next tick.
+    if (eventQueue.length > 0 && rafHandle == null) {
+      rafHandle = requestAnimationFrame(flush);
+    }
+  }
+
+  async function handleEvent(e) {
+    if (debugLog) console.debug("[spice]", e.kind, e);
     switch (e.kind) {
       case "surface_created":
-        if (e.primary) {
-          surfaceInfo = { width: e.width, height: e.height, format: e.format };
-          await tick();
-          if (canvasEl) {
-            canvasEl.width = e.width;
-            canvasEl.height = e.height;
-            ctx = canvasEl.getContext("2d", { alpha: false });
-            ctx.fillStyle = "#000";
-            ctx.fillRect(0, 0, e.width, e.height);
-          }
-        }
+        await handleSurfaceCreated(e);
+        break;
+
+      case "surface_destroyed":
+        // Only matters for non-primary; nothing to do for now.
         break;
 
       case "region":
@@ -68,15 +101,36 @@
         paintCopyRect(e);
         break;
 
+      case "stream_created":
+        streamCount++;
+        break;
+
+      case "stream_destroyed":
+        streamCount = Math.max(0, streamCount - 1);
+        break;
+
       case "stream_frame":
         if (!ctx) return;
-        // StreamFrame pixels are BGRA stride = width*4.
+        // Per capsaicin contract: BGRA, top-down, stride = width*4.
         paintRegion(e.destRect, e.pixels, "xrgb8888");
         break;
 
       case "reset":
+        // Server dropped all cache state. Clear our framebuffer so we
+        // don't composite stale pixels while waiting for fresh draws.
+        if (ctx && canvasEl) {
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+        }
+        break;
+
       case "mark":
-        // no-op for now
+        // Browser canvas presents lazily via rAF anyway; nothing to flush
+        // beyond the batching we already do. Left as a hook.
+        break;
+
+      case "mode":
+        // Legacy mode hint. SurfaceCreated is authoritative; ignore.
         break;
 
       case "closed":
@@ -84,6 +138,31 @@
         connected = false;
         break;
     }
+  }
+
+  async function handleSurfaceCreated(e) {
+    if (!e.primary) {
+      // Secondary surface: tolerated miss. capsaicin will still drive the
+      // primary correctly; any draws into the secondary surface simply
+      // won't show up on our canvas. Acceptable per the contract.
+      return;
+    }
+    // Hostile-server guard.
+    const pixels = e.width * e.height;
+    if (e.width === 0 || e.height === 0 ||
+        e.width > MAX_DIM || e.height > MAX_DIM ||
+        pixels > MAX_PIXELS) {
+      error = `Server reported unreasonable surface size ${e.width}×${e.height}`;
+      return;
+    }
+    surfaceInfo = { width: e.width, height: e.height, format: e.format };
+    await tick();
+    if (!canvasEl) return;
+    canvasEl.width = e.width;
+    canvasEl.height = e.height;
+    ctx = canvasEl.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, e.width, e.height);
   }
 
   function decodeBase64(b64) {
@@ -98,7 +177,7 @@
     if (w <= 0 || h <= 0) return;
 
     if (pixels.kind === "solid_color") {
-      // argb packed as 32-bit; canvas expects rgba string
+      // argb packed as 32-bit AARRGGBB. Alpha ignored for XRGB surfaces.
       const argb = pixels.argb >>> 0;
       const r = (argb >> 16) & 0xff;
       const g = (argb >> 8) & 0xff;
@@ -108,12 +187,10 @@
       return;
     }
 
-    // Raw: BGRA bytes with a stride (may exceed w*4)
+    // Raw path. SPICE XRGB8888 wire format is little-endian 0x00RRGGBB →
+    // bytes (B, G, R, X). Canvas ImageData expects RGBA bytes.
     const src = decodeBase64(pixels.data_b64);
     const stride = pixels.stride;
-
-    // SPICE surface formats we handle: xrgb8888/argb8888 (32bpp BGRA little-endian on-wire)
-    // Fast path when stride == w*4: build ImageData directly.
     const image = ctx.createImageData(w, h);
     const dst = image.data;
 
@@ -132,7 +209,7 @@
         }
       }
     } else {
-      // Unknown format: paint red flag
+      // Unknown format: paint a red stripe so the bug is visible.
       for (let i = 0; i < dst.length; i += 4) {
         dst[i] = 255; dst[i+1] = 0; dst[i+2] = 0; dst[i+3] = 255;
       }
@@ -145,7 +222,9 @@
     const { srcX, srcY, destRect } = e;
     const w = destRect.width, h = destRect.height;
     if (w <= 0 || h <= 0) return;
-    // Copy from (srcX, srcY, w, h) to (destRect.left, destRect.top, w, h) inside the canvas.
+    // Canvas spec: drawImage from the same canvas reads through an
+    // internal intermediate buffer, so overlapping src/dest is safe
+    // (memmove semantics). Verified in Firefox/Chromium/WebKit.
     ctx.drawImage(canvasEl, srcX, srcY, w, h, destRect.left, destRect.top, w, h);
   }
 
@@ -173,7 +252,6 @@
     Numpad4: 0x4b, Numpad5: 0x4c, Numpad6: 0x4d, NumpadAdd: 0x4e,
     Numpad1: 0x4f, Numpad2: 0x50, Numpad3: 0x51, Numpad0: 0x52,
     NumpadDecimal: 0x53, F11: 0x57, F12: 0x58,
-    // Extended (0xE0 prefix)
     NumpadEnter: 0xe01c, ControlRight: 0xe01d, NumpadDivide: 0xe035,
     AltRight: 0xe038, Home: 0xe047, ArrowUp: 0xe048, PageUp: 0xe049,
     ArrowLeft: 0xe04b, ArrowRight: 0xe04d, End: 0xe04f, ArrowDown: 0xe050,
@@ -193,11 +271,6 @@
       } catch (_) {}
     };
   }
-
-  // ── Input: mouse ──────────────────────────────────────────────────────
-  //
-  // SPICE button numbering: 1=left 2=middle 3=right 4=wheel-up 5=wheel-down
-  // Use absolute-position mode (client-managed pointer).
 
   let buttonsMask = 0;
 
@@ -252,7 +325,6 @@
 
   async function wheel(ev) {
     ev.preventDefault();
-    // Wheel reports dy<0 => up => button 4, dy>0 => down => button 5.
     const button = ev.deltaY < 0 ? 4 : 5;
     try {
       await invoke("spice_input", { event: { kind: "mouse_press", button, buttons: buttonsMask } });
@@ -276,6 +348,9 @@
       {/if}
       {#if surfaceInfo}
         <span class="meta">{surfaceInfo.width}×{surfaceInfo.height} · {surfaceInfo.format}</span>
+      {/if}
+      {#if streamCount > 0}
+        <span class="meta">{streamCount} stream{streamCount === 1 ? "" : "s"}</span>
       {/if}
     </span>
     <div class="actions">
@@ -312,7 +387,7 @@
     padding: 8px 16px; background: var(--bg-surface);
     border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
-  .title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .meta { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', monospace; }
 
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
