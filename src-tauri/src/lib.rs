@@ -14,6 +14,7 @@ use commands::spice;
 use commands::hostdev;
 use commands::domain_caps as cmd_domain_caps;
 use commands::boot as cmd_boot;
+use commands::char_devices as cmd_char_devices;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +94,14 @@ pub fn run() {
             cmd_domain_caps::get_domain_capabilities,
             cmd_boot::get_boot_config,
             cmd_boot::apply_boot_patch,
+            // Char devices (Round F)
+            cmd_char_devices::get_char_devices,
+            cmd_char_devices::add_channel,
+            cmd_char_devices::remove_channel,
+            cmd_char_devices::add_serial,
+            cmd_char_devices::remove_serial,
+            cmd_char_devices::add_guest_agent_channel,
+            cmd_char_devices::add_spice_vdagent_channel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

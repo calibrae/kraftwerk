@@ -8,4 +8,5 @@ pub mod spice;
 pub mod hostdev;
 pub mod domain_caps;
 pub mod boot;
+pub mod char_devices;
 pub mod storage;

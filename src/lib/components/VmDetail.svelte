@@ -4,6 +4,7 @@
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
+  import CharDevicesPanel from "./CharDevicesPanel.svelte";
   import VmOverview from "./VmOverview.svelte";
 
   const appState = getState();
@@ -169,6 +170,7 @@
       <button class="tab" class:active={activeTab === "config"} onclick={() => activeTab = "config"}>Configuration</button>
       <button class="tab" class:active={activeTab === "hardware"} onclick={() => activeTab = "hardware"}>Hardware</button>
       <button class="tab" class:active={activeTab === "boot"} onclick={() => activeTab = "boot"}>Boot</button>
+      <button class="tab" class:active={activeTab === "comms"} onclick={() => activeTab = "comms"}>Communication</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
@@ -181,6 +183,8 @@
         <HardwarePanel vmName={vm.name} />
       {:else if activeTab === "boot"}
         <BootPanel vmName={vm.name} />
+      {:else if activeTab === "comms"}
+        <CharDevicesPanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <div class="vm-xml-section">
           <div class="xml-header">

@@ -1293,3 +1293,67 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round F: char devices (serial / console / channel / parallel) ───
+
+#[test]
+fn test_read_char_devices_on_fedora() {
+    let conn = connect_testhost();
+    let snap = conn.get_char_devices("fedora-workstation")
+        .expect("get_char_devices");
+    println!(
+        "fedora-workstation char devices: serials={} consoles={} channels={} parallels={}",
+        snap.serials.len(), snap.consoles.len(), snap.channels.len(), snap.parallels.len()
+    );
+    // At minimum we expect one serial pty and a virtio console.
+    assert!(!snap.serials.is_empty(), "should have at least one serial");
+    assert!(!snap.consoles.is_empty(), "should have at least one console");
+    // SPICE vdagent is usually there because fedora-workstation has SPICE graphics.
+    let has_vdagent = snap.channels.iter()
+        .any(|c| c.target_name.as_deref() == Some("com.redhat.spice.0"));
+    println!("has vdagent channel: {}", has_vdagent);
+}
+
+#[test]
+fn test_qemu_ga_channel_add_remove_round_trip() {
+    use virtmanager_rs_lib::libvirt::char_devices as chd;
+
+    let conn = connect_testhost();
+    let before = conn.get_char_devices("fedora-workstation").unwrap();
+    let ga_name = "org.qemu.guest_agent.0";
+    let had_ga_before = before.channels.iter()
+        .any(|c| c.target_name.as_deref() == Some(ga_name));
+
+    // If already present, remove it first so we exercise both paths,
+    // then restore at the end. If not present, add it and remove it.
+    if had_ga_before {
+        conn.remove_channel("fedora-workstation", ga_name, false, true)
+            .expect("pre-remove existing qemu-ga for test");
+    }
+
+    // Add persistent-only so no live attach is needed.
+    conn.add_guest_agent_channel("fedora-workstation", false, true)
+        .expect("add qemu-ga channel");
+
+    let mid = conn.get_char_devices("fedora-workstation").unwrap();
+    let added = mid.channels.iter()
+        .find(|c| c.target_name.as_deref() == Some(ga_name))
+        .expect("qemu-ga channel should be present after add");
+    assert_eq!(added.target_type, "virtio");
+    assert!(matches!(added.source, chd::CharDeviceType::Unix { .. }));
+
+    // Cleanup: remove the channel we just added.
+    conn.remove_channel("fedora-workstation", ga_name, false, true)
+        .expect("remove qemu-ga channel");
+    let after = conn.get_char_devices("fedora-workstation").unwrap();
+    assert!(
+        !after.channels.iter().any(|c| c.target_name.as_deref() == Some(ga_name)),
+        "qemu-ga channel should be gone after remove"
+    );
+
+    // Restore if the VM originally had qemu-ga configured.
+    if had_ga_before {
+        conn.add_guest_agent_channel("fedora-workstation", false, true)
+            .expect("restore qemu-ga");
+    }
+}
