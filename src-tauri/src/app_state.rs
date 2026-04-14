@@ -193,6 +193,15 @@ impl AppState {
         *guard = Some(session);
     }
 
+
+    /// Clone of the active SPICE input sender. Returns None when there's
+    /// no session. Callers should prefer this over `spice_send_input` so
+    /// they can drop the AppState mutex before awaiting.
+    pub fn spice_sender(&self) -> Option<tokio::sync::mpsc::Sender<SpiceInput>> {
+        let guard = self.spice.lock().unwrap();
+        guard.as_ref().map(|s| s.input_tx.clone())
+    }
+
     pub fn close_spice(&self) {
         let mut guard = self.spice.lock().unwrap();
         if let Some(mut session) = guard.take() {

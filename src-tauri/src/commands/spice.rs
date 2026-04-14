@@ -200,11 +200,21 @@ pub enum InputEventDto {
     MouseRelease { button: u8, #[serde(default)] buttons: u32 },
 }
 
+/// SPICE signals key release by setting bit 0x80 on the *low byte* of
+/// the scancode. For 0xE0-prefixed extended keys (arrows, right-ctrl,
+/// etc.) the high byte must be preserved — a naive `scancode | 0x80`
+/// corrupts scancodes whose high byte intersects 0x80.
+///
+/// Example: Right arrow = 0xE04D down, 0xE0CD up.
+fn release_scancode(scancode: u32) -> u32 {
+    (scancode & 0xFFFF_FF00) | ((scancode & 0xFF) | 0x80)
+}
+
 impl From<InputEventDto> for InputEvent {
     fn from(v: InputEventDto) -> Self {
         match v {
             InputEventDto::KeyDown { scancode } => InputEvent::KeyDown(scancode),
-            InputEventDto::KeyUp { scancode } => InputEvent::KeyUp(scancode),
+            InputEventDto::KeyUp { scancode } => InputEvent::KeyUp(release_scancode(scancode)),
             InputEventDto::MousePosition { x, y, buttons } => InputEvent::MousePosition {
                 x, y, buttons, display: 0,
             },
@@ -292,14 +302,52 @@ pub fn close_spice(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn spice_input(
+pub async fn spice_input(
     state: State<'_, AppState>,
     event: InputEventDto,
 ) -> Result<(), VirtManagerError> {
-    state
-        .spice_send_input(event.into())
-        .map_err(|e| VirtManagerError::OperationFailed {
-            operation: "spiceInput".into(),
-            reason: e.to_string(),
-        })
+    // Snapshot the sender (cheap clone) then drop the mutex BEFORE awaiting,
+    // so we can use async send().await instead of try_send. Dropping a
+    // KeyUp because the queue was full produces a sticky-key bug; prefer
+    // backpressure over drops for keyboard input.
+    let sender = state.spice_sender().ok_or_else(|| VirtManagerError::OperationFailed {
+        operation: "spiceInput".into(),
+        reason: "no active SPICE session".into(),
+    })?;
+    sender.send(event.into()).await.map_err(|_| VirtManagerError::OperationFailed {
+        operation: "spiceInput".into(),
+        reason: "SPICE session closed".into(),
+    })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::release_scancode;
+
+    #[test]
+    fn release_sets_break_bit_on_short_scancode() {
+        // 'A' key (0x1E) -> 0x9E
+        assert_eq!(release_scancode(0x1E), 0x9E);
+    }
+
+    #[test]
+    fn release_preserves_extended_high_byte() {
+        // Right arrow (0xE04D) -> 0xE0CD (high byte 0xE0 stays; low byte 0x4D | 0x80)
+        assert_eq!(release_scancode(0xE04D), 0xE0CD);
+    }
+
+    #[test]
+    fn release_idempotent_on_already_released() {
+        // If someone double-releases, bit 0x80 is already set — stays set.
+        assert_eq!(release_scancode(0x9E), 0x9E);
+    }
+
+    #[test]
+    fn release_does_not_touch_unrelated_high_bits() {
+        // Hypothetical multi-byte scancode: make sure we only twiddle
+        // the low byte, not any pattern that happens to include 0x80
+        // in a higher byte.
+        assert_eq!(release_scancode(0x1E80_1E), 0x1E80_9E);
+    }
 }
