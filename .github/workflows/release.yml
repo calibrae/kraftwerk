@@ -55,6 +55,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
       - run: npm ci
+      - name: unlock login keychain for codesign
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
       - name: tauri build (sign + notarize)
         run: npm run tauri build
       - uses: actions/upload-artifact@v4
