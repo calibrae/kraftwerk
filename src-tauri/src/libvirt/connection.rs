@@ -206,6 +206,67 @@ impl LibvirtConnection {
         self.define_domain_xml(&new_xml)
     }
 
+    // ────────── controllers (Round H) ──────────
+
+    /// List all <controller> entries from a domain's persistent XML.
+    pub fn list_controllers(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::controller_config::ControllerConfig>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::controller_config::parse_controllers(&xml)
+    }
+
+    /// Add a controller. Persistent-only by default (most controller
+    /// changes require restart); caller can opt into live via flags.
+    pub fn add_controller(
+        &self,
+        name: &str,
+        cfg: &crate::libvirt::controller_config::ControllerConfig,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let frag = crate::libvirt::controller_config::build_controller_xml(cfg)?;
+        self.attach_device(name, &frag, live, config)
+    }
+
+    /// Detach a controller by (type, index). Persistent-only by default.
+    pub fn remove_controller(
+        &self,
+        name: &str,
+        ctype: &str,
+        index: u32,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        // Build a minimal <controller/> stub — libvirt matches on type+index.
+        let frag = format!(
+            "<controller type='{}' index='{}'/>",
+            crate::libvirt::xml_helpers::escape_xml(ctype),
+            index,
+        );
+        self.detach_device(name, &frag, live, config)
+    }
+
+    /// Update a controller: rebuild the full <controller> block by
+    /// splicing into the persistent XML, then redefine.
+    ///
+    /// Persistent-only. Most controller model changes require VM shutdown
+    /// — libvirt will reject live updates for these anyway.
+    pub fn update_controller(
+        &self,
+        name: &str,
+        ctype: &str,
+        index: u32,
+        new_cfg: &crate::libvirt::controller_config::ControllerConfig,
+    ) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::controller_config::apply_update_controller(
+            &xml, ctype, index, new_cfg,
+        )?;
+        self.define_domain_xml(&new_xml)
+    }
+
     /// Open the graphics (VNC/SPICE) FD for a domain. Returns a raw file descriptor
     /// that speaks the native graphics protocol (VNC for VNC-configured VMs,
     /// SPICE for SPICE-configured VMs). The caller takes ownership of the FD.

@@ -1293,3 +1293,100 @@ fn test_apply_event_action_round_trip() {
     let after = conn.get_boot_config("fedora-workstation").unwrap();
     assert_eq!(after.on_poweroff, before.on_poweroff);
 }
+
+// ─── Round H: controllers ───
+//
+// fedora-workstation is our disposable test target. Controllers are
+// persistent-only in this suite — most controller model changes require
+// a VM restart which we never attempt from tests.
+
+#[test]
+fn test_list_controllers_on_fedora() {
+    let conn = connect_testhost();
+    let cs = conn
+        .list_controllers(TEST_VM)
+        .expect("list_controllers");
+
+    // fedora-workstation (observed via virsh dumpxml) has at least:
+    //   - 1 USB controller (qemu-xhci)
+    //   - 1 PCI root + several pcie-root-ports
+    //   - 1 virtio-serial
+    //   - 1 SATA
+    let types: std::collections::BTreeSet<&str> =
+        cs.iter().map(|c| c.controller_type.as_str()).collect();
+
+    assert!(types.contains("usb"), "expected a USB controller, got: {types:?}");
+    assert!(types.contains("pci"), "expected a PCI controller, got: {types:?}");
+    assert!(
+        types.contains("virtio-serial"),
+        "expected a virtio-serial controller, got: {types:?}"
+    );
+
+    // PCI-root must be present and parsed with model=pcie-root.
+    let pci0 = cs
+        .iter()
+        .find(|c| c.controller_type == "pci" && c.index == 0)
+        .expect("pci index 0");
+    assert!(
+        pci0.model.as_deref().unwrap_or("").contains("root"),
+        "expected pci root model, got {:?}",
+        pci0.model
+    );
+
+    println!(
+        "fedora-workstation has {} controllers: {}",
+        cs.len(),
+        cs.iter()
+            .map(|c| format!("{}#{}/{}", c.controller_type, c.index, c.model.as_deref().unwrap_or("-")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+#[test]
+fn test_update_usb_controller_model_round_trip() {
+    // Persistent-only — most controller model changes require shutdown,
+    // so we NEVER touch the live definition here. save+restore.
+    let conn = connect_testhost();
+
+    let before = conn.list_controllers(TEST_VM).expect("list before");
+    let usb = before
+        .iter()
+        .find(|c| c.controller_type == "usb")
+        .cloned()
+        .expect("fedora-workstation must have a USB controller");
+
+    // Target: qemu-xhci with 15 ports. If already there, swap to nec-xhci
+    // briefly and restore. This exercises the update path either way.
+    let want_model = if usb.model.as_deref() == Some("qemu-xhci") {
+        "nec-xhci"
+    } else {
+        "qemu-xhci"
+    };
+
+    let mut edited = usb.clone();
+    edited.model = Some(want_model.to_string());
+    // Keep ports where they were; xhci models accept up to 15.
+
+    conn.update_controller(TEST_VM, "usb", usb.index, &edited)
+        .expect("update_controller");
+
+    let mid = conn.list_controllers(TEST_VM).expect("list mid");
+    let mid_usb = mid
+        .iter()
+        .find(|c| c.controller_type == "usb" && c.index == usb.index)
+        .expect("usb still present after update");
+    assert_eq!(mid_usb.model.as_deref(), Some(want_model));
+
+    // Restore original.
+    conn.update_controller(TEST_VM, "usb", usb.index, &usb)
+        .expect("restore original USB controller");
+
+    let after = conn.list_controllers(TEST_VM).expect("list after");
+    let after_usb = after
+        .iter()
+        .find(|c| c.controller_type == "usb" && c.index == usb.index)
+        .expect("usb still present after restore");
+    assert_eq!(after_usb.model, usb.model);
+    assert_eq!(after_usb.ports, usb.ports);
+}
