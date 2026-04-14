@@ -1464,3 +1464,113 @@ fn test_cdrom_media_change_round_trip() {
     assert!(!final_disks.iter().any(|d| d.target == target),
         "cdrom target '{target}' should have been removed");
 }
+// ─── Round C: NIC management ───
+//
+// Drop guard ensures we always remove the test NIC even if a test panics
+// mid-way. We pick a deterministic MAC in libvirt's 52:54:00 OUI so the
+// post-run cleanup is unambiguous.
+
+const TEST_NIC_MAC: &str = "52:54:00:fe:dc:ba";
+
+struct NicCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    mac: &'a str,
+}
+impl<'a> Drop for NicCleanup<'a> {
+    fn drop(&mut self) {
+        // Try both live and config in case the VM state changed mid-test.
+        let _ = self.conn.remove_domain_nic(self.vm, self.mac, true, false);
+        let _ = self.conn.remove_domain_nic(self.vm, self.mac, false, true);
+    }
+}
+
+#[test]
+fn test_list_domain_nics_on_fedora() {
+    let conn = connect_testhost();
+    let nics = conn.list_domain_nics(TEST_VM).expect("list_domain_nics");
+    println!("{TEST_VM} has {} NIC(s)", nics.len());
+    assert!(!nics.is_empty(), "fedora-workstation is expected to have at least one NIC");
+    for n in &nics {
+        println!("  source={:?} mac={:?} model={:?} target={:?} link={:?}",
+            n.source, n.mac, n.model, n.target_dev, n.link_state);
+    }
+}
+
+#[test]
+fn test_hot_add_and_detach_network_nic() {
+    use virtmanager_rs_lib::libvirt::nic_config::{NicConfig, NicSource};
+
+    let conn = connect_testhost();
+    let vm = conn.list_all_domains().unwrap();
+    let running = vm.iter().any(|d| d.name == TEST_VM && matches!(d.state, VmState::Running));
+    if !running {
+        println!("Skipping hot-add NIC test: {TEST_VM} not running");
+        return;
+    }
+
+    let before = conn.list_domain_nics(TEST_VM).unwrap().len();
+
+    // Pre-emptive cleanup in case a prior run was killed.
+    let _ = conn.remove_domain_nic(TEST_VM, TEST_NIC_MAC, true, false);
+
+    let nic = NicConfig {
+        source: NicSource::Bridge { name: "lan".into() },
+        model: Some("virtio".into()),
+        mac: Some(TEST_NIC_MAC.into()),
+        ..Default::default()
+    };
+
+    let _guard = NicCleanup { conn: &conn, vm: TEST_VM, mac: TEST_NIC_MAC };
+
+    conn.add_domain_nic(TEST_VM, &nic, true, false).expect("hot-add NIC");
+
+    let after_add = conn.list_domain_nics(TEST_VM).unwrap();
+    assert_eq!(after_add.len(), before + 1, "NIC count should have grown");
+    let found = after_add.iter().any(|n| n.mac.as_deref() == Some(TEST_NIC_MAC));
+    assert!(found, "new NIC with mac {TEST_NIC_MAC} should be visible");
+
+    conn.remove_domain_nic(TEST_VM, TEST_NIC_MAC, true, false).expect("detach NIC");
+
+    let after_del = conn.list_domain_nics(TEST_VM).unwrap();
+    assert_eq!(after_del.len(), before, "NIC count should be back to initial");
+}
+
+#[test]
+fn test_link_state_toggle_round_trip() {
+    use virtmanager_rs_lib::libvirt::nic_config::{NicConfig, NicSource};
+
+    let conn = connect_testhost();
+    let vm = conn.list_all_domains().unwrap();
+    let running = vm.iter().any(|d| d.name == TEST_VM && matches!(d.state, VmState::Running));
+    if !running {
+        println!("Skipping link-state test: {TEST_VM} not running");
+        return;
+    }
+
+    // Pre-clean and add a fresh test NIC to toggle.
+    let _ = conn.remove_domain_nic(TEST_VM, TEST_NIC_MAC, true, false);
+    let nic = NicConfig {
+        source: NicSource::Bridge { name: "lan".into() },
+        model: Some("virtio".into()),
+        mac: Some(TEST_NIC_MAC.into()),
+        ..Default::default()
+    };
+    let _guard = NicCleanup { conn: &conn, vm: TEST_VM, mac: TEST_NIC_MAC };
+    conn.add_domain_nic(TEST_VM, &nic, true, false).expect("add NIC for toggle");
+
+    // Toggle to down.
+    let down = NicConfig { link_state: Some("down".into()), ..nic.clone() };
+    conn.update_domain_nic(TEST_VM, &down, true, false).expect("link down");
+    let after_down = conn.list_domain_nics(TEST_VM).unwrap();
+    let got = after_down.iter().find(|n| n.mac.as_deref() == Some(TEST_NIC_MAC)).expect("nic present");
+    assert_eq!(got.link_state.as_deref(), Some("down"), "link should be down");
+
+    // Toggle back up.
+    let up = NicConfig { link_state: Some("up".into()), ..nic.clone() };
+    conn.update_domain_nic(TEST_VM, &up, true, false).expect("link up");
+    let after_up = conn.list_domain_nics(TEST_VM).unwrap();
+    let got = after_up.iter().find(|n| n.mac.as_deref() == Some(TEST_NIC_MAC)).expect("nic present");
+    assert_eq!(got.link_state.as_deref(), Some("up"), "link should be up");
+}
+

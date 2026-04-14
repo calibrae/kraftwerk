@@ -15,6 +15,7 @@ use commands::hostdev;
 use commands::domain_caps as cmd_domain_caps;
 use commands::boot as cmd_boot;
 use commands::disks as cmd_disks;
+use commands::nics as cmd_nics;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -98,6 +99,10 @@ pub fn run() {
             cmd_disks::add_domain_disk,
             cmd_disks::remove_domain_disk,
             cmd_disks::update_domain_disk,
+            cmd_nics::list_domain_nics,
+            cmd_nics::add_domain_nic,
+            cmd_nics::remove_domain_nic,
+            cmd_nics::update_domain_nic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

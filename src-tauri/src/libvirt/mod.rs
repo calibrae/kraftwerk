@@ -8,6 +8,7 @@ pub mod boot_config;
 pub mod disk_config;
 pub mod domain_builder;
 pub mod network_config;
+pub mod nic_config;
 pub mod storage_config;
 pub mod vnc_proxy;
 pub mod spice_proxy;
