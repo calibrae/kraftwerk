@@ -224,18 +224,23 @@ pub fn open_spice(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     name: String,
+    #[allow(non_snake_case)]
+    password: Option<String>,
 ) -> Result<(), VirtManagerError> {
     state.close_spice();
 
-    // Parse VM XML for SPICE endpoint + password
-    let xml = state.libvirt().get_domain_xml_flags(&name, false, true)?;
+    // Parse VM XML for the SPICE endpoint. We deliberately do NOT use
+    // VIR_DOMAIN_XML_SECURE to fetch the ticket: auto-extracting a
+    // server-configured password defeats the purpose of ticket auth.
+    // The password must be provided by the user.
+    let xml = state.libvirt().get_domain_xml(&name, false)?;
     let (listen, port) = spice_proxy::parse_spice_endpoint(&xml).ok_or_else(|| {
         VirtManagerError::OperationFailed {
             operation: "parseSpiceEndpoint".into(),
             reason: "VM has no active SPICE graphics port".into(),
         }
     })?;
-    let password = spice_proxy::parse_spice_password(&xml).unwrap_or_default();
+    let password = password.unwrap_or_default();
 
     let uri = state.current_uri().ok_or(VirtManagerError::NotConnected)?;
     let ssh_target = vnc_proxy::parse_ssh_target(&uri).ok_or_else(|| {
@@ -251,7 +256,15 @@ pub fn open_spice(
         port,
         &password,
         state.runtime_handle(),
-    )?;
+    )
+    .map_err(|e| {
+        let s = e.to_string().to_lowercase();
+        if s.contains("permission") || s.contains("auth") || s.contains("ticket") {
+            VirtManagerError::SpiceAuthRequired
+        } else {
+            e
+        }
+    })?;
 
     // Take the event receiver out so we can spawn a task that forwards to Tauri.
     let (fake_tx, events_rx) = tokio::sync::mpsc::channel(1);

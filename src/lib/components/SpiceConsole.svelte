@@ -37,6 +37,11 @@
   let unlisten = null;
   let aborted = false;
 
+  // Auth prompt state: shown when the SPICE server rejects our ticket.
+  let needPassword = $state(false);
+  let passwordInput = $state("");
+  let attempted = $state(false);
+
   // Coalescing: events accumulate in this queue, a single rAF flushes.
   const eventQueue = [];
   let rafHandle = null;
@@ -44,14 +49,35 @@
   let debugLog = false;
 
   onMount(async () => {
-    try {
-      unlisten = await listen("spice:event", (e) => enqueue(e.payload));
-      await invoke("open_spice", { name: vmName });
-      connected = true;
-    } catch (e) {
-      error = e?.message || JSON.stringify(e);
-    }
+    unlisten = await listen("spice:event", (e) => enqueue(e.payload));
+    await connectSpice(null);
   });
+
+  async function connectSpice(password) {
+    attempted = true;
+    error = null;
+    try {
+      await invoke("open_spice", { name: vmName, password });
+      connected = true;
+      needPassword = false;
+    } catch (e) {
+      // Backend error payload has shape { code, message, suggestion }.
+      if (e && e.code === "spice_auth_required") {
+        needPassword = true;
+        // Keep any previously-typed password so "try again" after a typo is quick.
+        error = passwordInput ? "Wrong password — try again." : null;
+      } else {
+        error = e?.message || JSON.stringify(e);
+      }
+      connected = false;
+    }
+  }
+
+  async function submitPassword(ev) {
+    ev?.preventDefault?.();
+    await connectSpice(passwordInput);
+    if (connected) passwordInput = ""; // don't retain the secret once accepted
+  }
 
   onDestroy(async () => {
     aborted = true;
@@ -363,6 +389,22 @@
     <div class="err-banner">{error}</div>
   {/if}
 
+  {#if needPassword && !connected}
+    <form class="password-prompt" onsubmit={submitPassword}>
+      <label>
+        <span>SPICE password</span>
+        <input
+          type="password"
+          bind:value={passwordInput}
+          placeholder="Enter the VM's SPICE password"
+          autocomplete="off"
+          autofocus
+        />
+      </label>
+      <button type="submit" class="btn btn-primary" disabled={!passwordInput}>Connect</button>
+    </form>
+  {/if}
+
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     class="canvas-wrap"
@@ -409,6 +451,31 @@
     border-bottom: 1px solid rgba(239, 68, 68, 0.3);
     color: #ef4444; font-size: 12px; flex-shrink: 0;
   }
+
+  .password-prompt {
+    padding: 16px; background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 12px; align-items: flex-end; flex-shrink: 0;
+  }
+  .password-prompt label {
+    display: flex; flex-direction: column; gap: 4px; flex: 1;
+  }
+  .password-prompt label span {
+    font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .password-prompt input {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-input); color: var(--text); font-size: 13px; font-family: inherit; outline: none;
+  }
+  .password-prompt input:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim);
+  }
+  .btn-primary {
+    padding: 7px 14px; border: 1px solid var(--accent); border-radius: 6px;
+    background: var(--accent); color: white; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .canvas-wrap {
     flex: 1; overflow: hidden; background: #000;

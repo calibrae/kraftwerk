@@ -33,6 +33,9 @@ pub enum VirtManagerError {
 
     #[error("Connection '{id}' not found")]
     ConnectionNotFound { id: String },
+
+    #[error("SPICE password required or incorrect")]
+    SpiceAuthRequired,
 }
 
 /// Serializable error payload for the frontend.
@@ -85,6 +88,10 @@ impl From<&VirtManagerError> for ErrorPayload {
             VirtManagerError::ConnectionNotFound { .. } => (
                 "connection_not_found",
                 None,
+            ),
+            VirtManagerError::SpiceAuthRequired => (
+                "spice_auth_required",
+                Some("Enter the SPICE console password for this VM."),
             ),
         };
 
