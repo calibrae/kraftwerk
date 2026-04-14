@@ -13,5 +13,6 @@ pub mod display;
 pub mod virtio;
 pub mod char_devices;
 pub mod filesystem;
+pub mod controllers;
 pub mod storage;
 pub mod nics;

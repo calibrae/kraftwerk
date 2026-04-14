@@ -20,6 +20,7 @@ use commands::display as cmd_display;
 use commands::virtio as cmd_virtio;
 use commands::char_devices as cmd_char_devices;
 use commands::filesystem as cmd_filesystem;
+use commands::controllers as cmd_controllers;
 use commands::storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -135,6 +136,10 @@ pub fn run() {
             cmd_filesystem::add_shmem,
             cmd_filesystem::remove_shmem,
             cmd_filesystem::enable_shared_memory_backing,
+            cmd_controllers::list_controllers,
+            cmd_controllers::add_controller,
+            cmd_controllers::remove_controller,
+            cmd_controllers::update_controller,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

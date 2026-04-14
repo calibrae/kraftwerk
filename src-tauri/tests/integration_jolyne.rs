@@ -745,7 +745,7 @@ fn test_create_and_delete_volume() {
 
     // Create a 100MB qcow2 volume
     let vol_xml = build_volume_xml(&VolumeBuildParams {
-        name: "test.qcow2",
+        name: &format!("vmrs-stortest-{}.qcow2", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
         capacity_bytes: 100 * 1024 * 1024,
         format: "qcow2",
         allocation_bytes: None,
@@ -753,25 +753,26 @@ fn test_create_and_delete_volume() {
     let path = conn
         .create_volume(TEST_POOL_NAME, &vol_xml)
         .expect("create_volume");
-    assert!(path.contains("test.qcow2"));
+    assert!(path.contains(".qcow2"));
 
-    // Verify it's listed
+    // Verify the volume we just created appears in the listing.
+    // (Pool may contain leftovers from prior aborted runs; assert by
+    // path match rather than total count.)
     let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
-    assert_eq!(vols.len(), 1);
-    assert_eq!(vols[0].name, "test.qcow2");
-    assert_eq!(vols[0].capacity, 100 * 1024 * 1024);
-    assert_eq!(vols[0].format, "qcow2");
+    let mine = vols.iter().find(|v| v.path == path).expect("just-created volume should be listed");
+    assert_eq!(mine.capacity, 100 * 1024 * 1024);
+    assert_eq!(mine.format, "qcow2");
 
-    // Resize to 200MB
-    conn.resize_volume(&path, 200 * 1024 * 1024)
-        .expect("resize_volume");
+    // Resize to 200MB and check by-path again.
+    conn.resize_volume(&path, 200 * 1024 * 1024).expect("resize_volume");
     let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
-    assert_eq!(vols[0].capacity, 200 * 1024 * 1024);
+    let mine = vols.iter().find(|v| v.path == path).expect("post-resize");
+    assert_eq!(mine.capacity, 200 * 1024 * 1024);
 
-    // Delete
+    // Delete the one we created; tolerate leftovers.
     conn.delete_volume(&path).expect("delete_volume");
     let vols = conn.list_volumes(TEST_POOL_NAME).unwrap();
-    assert!(vols.is_empty());
+    assert!(vols.iter().all(|v| v.path != path), "our volume should be gone");
 }
 
 #[test]
@@ -1464,6 +1465,7 @@ fn test_cdrom_media_change_round_trip() {
     assert!(!final_disks.iter().any(|d| d.target == target),
         "cdrom target '{target}' should have been removed");
 }
+
 // ─── Round C: NIC management ───
 //
 // Drop guard ensures we always remove the test NIC even if a test panics
@@ -1482,65 +1484,6 @@ impl<'a> Drop for NicCleanup<'a> {
         // Try both live and config in case the VM state changed mid-test.
         let _ = self.conn.remove_domain_nic(self.vm, self.mac, true, false);
         let _ = self.conn.remove_domain_nic(self.vm, self.mac, false, true);
-// ─── Round E: virtio-adjacent devices ───────────────────────────────────
-
-/// Guard: always restore the panic notifier to its pre-test state on
-/// drop, even on test failure / panic.
-struct PanicGuard<'a> {
-    conn: &'a LibvirtConnection,
-    vm: &'a str,
-    before: Option<virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig>,
-}
-impl<'a> Drop for PanicGuard<'a> {
-    fn drop(&mut self) {
-        let _ = self.conn.set_panic(self.vm, self.before.as_ref(), false, true);
-    }
-}
-
-/// Guard: always remove any leftover RNG device we added during a test.
-struct RngGuard<'a> {
-    conn: &'a LibvirtConnection,
-    vm: &'a str,
-    cfg: virtmanager_rs_lib::libvirt::virtio_devices::RngConfig,
-    live: bool,
-    config: bool,
-    armed: bool,
-}
-impl<'a> RngGuard<'a> {
-    fn disarm(mut self) { self.armed = false; }
-}
-impl<'a> Drop for RngGuard<'a> {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = self.conn.remove_rng(self.vm, &self.cfg, self.live, self.config);
-// ─── Round G: filesystem passthrough + shmem ───
-//
-// Live hypervisor: testhost (libvirt 10.x, QEMU 8.x).
-// Test VM: fedora-workstation. These tests MUTATE the persistent
-// definition - the Drop guard at the end of each test must restore
-// <memoryBacking> (and remove any leftover filesystem) even on panic,
-// so a failed assertion doesn't leave fedora-workstation unbootable on
-// next boot.
-
-use virtmanager_rs_lib::libvirt::filesystem_config as fsc;
-
-/// RAII cleanup. On drop, removes any leftover virtiofs filesystem
-/// matching `target_dir` and strips the <memoryBacking> block we added.
-struct RoundGCleanup<'a> {
-    conn: &'a LibvirtConnection,
-    vm: &'a str,
-    target_dir: String,
-    restore_memory_backing: bool,
-}
-
-impl Drop for RoundGCleanup<'_> {
-    fn drop(&mut self) {
-        // Best-effort cleanup; we're already on a panic path potentially,
-        // so swallow errors.
-        let _ = self.conn.remove_filesystem(self.vm, &self.target_dir, false, true);
-        if self.restore_memory_backing {
-            let _ = self.conn.remove_memory_backing(self.vm);
-        }
     }
 }
 
@@ -1553,16 +1496,6 @@ fn test_list_domain_nics_on_fedora() {
     for n in &nics {
         println!("  source={:?} mac={:?} model={:?} target={:?} link={:?}",
             n.source, n.mac, n.model, n.target_dev, n.link_state);
-fn test_list_filesystems_empty_on_fedora() {
-    let conn = connect_testhost();
-    let fs = conn.list_filesystems(TEST_VM).expect("list_filesystems");
-    // fedora-workstation has no <filesystem> entries by default.
-    println!("fedora-workstation has {} filesystem entries", fs.len());
-    for f in &fs {
-        println!(
-            "  {:?} {} -> {}",
-            f.driver_type, f.source_dir, f.target_dir
-        );
     }
 }
 
@@ -1642,6 +1575,7 @@ fn test_link_state_toggle_round_trip() {
     let got = after_up.iter().find(|n| n.mac.as_deref() == Some(TEST_NIC_MAC)).expect("nic present");
     assert_eq!(got.link_state.as_deref(), Some("up"), "link should be up");
 }
+
 
 // ─── Round D: display (graphics / video / sound / input) ───
 
@@ -1736,13 +1670,6 @@ fn test_video_model_round_trip_virtio_cirrus_virtio() {
     assert_eq!(
         after_model, original_video.model,
         "video model should be restored"
-fn test_list_shmems_empty_on_fedora() {
-    let conn = connect_testhost();
-    let shs = conn.list_shmems(TEST_VM).expect("list_shmems");
-    println!("fedora-workstation has {} shmem entries", shs.len());
-    assert!(
-        shs.is_empty(),
-        "expected no shmem entries on fedora-workstation"
     );
 }
 
@@ -1797,6 +1724,44 @@ fn test_input_list_round_trip() {
     let after = conn.get_display_config("fedora-workstation").unwrap();
     // Spot-check: counts match (libvirt may reorder slightly).
     assert_eq!(after.input.len(), original_inputs.len(), "input count restored");
+}
+
+// ─── Round E: virtio-adjacent devices ───────────────────────────────────
+
+/// Guard: always restore the panic notifier to its pre-test state on
+/// drop, even on test failure / panic.
+struct PanicGuard<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    before: Option<virtmanager_rs_lib::libvirt::virtio_devices::PanicConfig>,
+}
+impl<'a> Drop for PanicGuard<'a> {
+    fn drop(&mut self) {
+        let _ = self.conn.set_panic(self.vm, self.before.as_ref(), false, true);
+    }
+}
+
+/// Guard: always remove any leftover RNG device we added during a test.
+struct RngGuard<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    cfg: virtmanager_rs_lib::libvirt::virtio_devices::RngConfig,
+    live: bool,
+    config: bool,
+    armed: bool,
+}
+impl<'a> RngGuard<'a> {
+    fn disarm(mut self) { self.armed = false; }
+}
+impl<'a> Drop for RngGuard<'a> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.conn.remove_rng(self.vm, &self.cfg, self.live, self.config);
+        }
+    }
+}
+
+#[test]
 fn test_get_virtio_devices_on_fedora() {
     let conn = connect_testhost();
     let snap = conn
@@ -1815,7 +1780,6 @@ fn test_get_virtio_devices_on_fedora() {
     // fedora-workstation was sampled with itco watchdog + virtio balloon + virtio rng.
     assert!(snap.balloon.is_some(), "should have a memballoon");
     assert!(!snap.rngs.is_empty(), "should have at least one RNG");
-}
 
 #[test]
 fn test_panic_notifier_round_trip_persistent() {
@@ -1908,6 +1872,9 @@ fn test_rng_hotplug_round_trip() {
 
     let after = conn.get_virtio_devices("fedora-workstation").unwrap();
     assert_eq!(after.rngs.len(), before_count, "RNG count should match original");
+}
+}
+
 // ─── Round F: char devices (serial / console / channel / parallel) ───
 
 #[test]
@@ -1970,6 +1937,65 @@ fn test_qemu_ga_channel_add_remove_round_trip() {
         conn.add_guest_agent_channel("fedora-workstation", false, true)
             .expect("restore qemu-ga");
     }
+}
+
+// ─── Round G: filesystem passthrough + shmem ───
+//
+// Live hypervisor: testhost (libvirt 10.x, QEMU 8.x).
+// Test VM: fedora-workstation. These tests MUTATE the persistent
+// definition - the Drop guard at the end of each test must restore
+// <memoryBacking> (and remove any leftover filesystem) even on panic,
+// so a failed assertion doesn't leave fedora-workstation unbootable on
+// next boot.
+
+use virtmanager_rs_lib::libvirt::filesystem_config as fsc;
+
+/// RAII cleanup. On drop, removes any leftover virtiofs filesystem
+/// matching `target_dir` and strips the <memoryBacking> block we added.
+struct RoundGCleanup<'a> {
+    conn: &'a LibvirtConnection,
+    vm: &'a str,
+    target_dir: String,
+    restore_memory_backing: bool,
+}
+
+impl Drop for RoundGCleanup<'_> {
+    fn drop(&mut self) {
+        // Best-effort cleanup; we're already on a panic path potentially,
+        // so swallow errors.
+        let _ = self.conn.remove_filesystem(self.vm, &self.target_dir, false, true);
+        if self.restore_memory_backing {
+            let _ = self.conn.remove_memory_backing(self.vm);
+        }
+    }
+}
+
+#[test]
+fn test_list_filesystems_empty_on_fedora() {
+    let conn = connect_testhost();
+    let fs = conn.list_filesystems(TEST_VM).expect("list_filesystems");
+    // fedora-workstation has no <filesystem> entries by default.
+    println!("fedora-workstation has {} filesystem entries", fs.len());
+    for f in &fs {
+        println!(
+            "  {:?} {} -> {}",
+            f.driver_type, f.source_dir, f.target_dir
+        );
+    }
+}
+
+#[test]
+fn test_list_shmems_empty_on_fedora() {
+    let conn = connect_testhost();
+    let shs = conn.list_shmems(TEST_VM).expect("list_shmems");
+    println!("fedora-workstation has {} shmem entries", shs.len());
+    assert!(
+        shs.is_empty(),
+        "expected no shmem entries on fedora-workstation"
+    );
+}
+
+#[test]
 fn test_virtiofs_add_remove_round_trip_on_fedora() {
     let conn = connect_testhost();
 
@@ -2068,4 +2094,101 @@ fn test_enable_shared_memory_backing_is_idempotent() {
         .expect("enable_shared_memory_backing (2nd call)");
     let xml = conn.get_domain_xml(TEST_VM, true).unwrap();
     assert_eq!(xml.matches("<memoryBacking").count(), 1);
+}
+
+// ─── Round H: controllers ───
+//
+// fedora-workstation is our disposable test target. Controllers are
+// persistent-only in this suite — most controller model changes require
+// a VM restart which we never attempt from tests.
+
+#[test]
+fn test_list_controllers_on_fedora() {
+    let conn = connect_testhost();
+    let cs = conn
+        .list_controllers(TEST_VM)
+        .expect("list_controllers");
+
+    // fedora-workstation (observed via virsh dumpxml) has at least:
+    //   - 1 USB controller (qemu-xhci)
+    //   - 1 PCI root + several pcie-root-ports
+    //   - 1 virtio-serial
+    //   - 1 SATA
+    let types: std::collections::BTreeSet<&str> =
+        cs.iter().map(|c| c.controller_type.as_str()).collect();
+
+    assert!(types.contains("usb"), "expected a USB controller, got: {types:?}");
+    assert!(types.contains("pci"), "expected a PCI controller, got: {types:?}");
+    assert!(
+        types.contains("virtio-serial"),
+        "expected a virtio-serial controller, got: {types:?}"
+    );
+
+    // PCI-root must be present and parsed with model=pcie-root.
+    let pci0 = cs
+        .iter()
+        .find(|c| c.controller_type == "pci" && c.index == 0)
+        .expect("pci index 0");
+    assert!(
+        pci0.model.as_deref().unwrap_or("").contains("root"),
+        "expected pci root model, got {:?}",
+        pci0.model
+    );
+
+    println!(
+        "fedora-workstation has {} controllers: {}",
+        cs.len(),
+        cs.iter()
+            .map(|c| format!("{}#{}/{}", c.controller_type, c.index, c.model.as_deref().unwrap_or("-")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+#[test]
+fn test_update_usb_controller_model_round_trip() {
+    // Persistent-only — most controller model changes require shutdown,
+    // so we NEVER touch the live definition here. save+restore.
+    let conn = connect_testhost();
+
+    let before = conn.list_controllers(TEST_VM).expect("list before");
+    let usb = before
+        .iter()
+        .find(|c| c.controller_type == "usb")
+        .cloned()
+        .expect("fedora-workstation must have a USB controller");
+
+    // Target: qemu-xhci with 15 ports. If already there, swap to nec-xhci
+    // briefly and restore. This exercises the update path either way.
+    let want_model = if usb.model.as_deref() == Some("qemu-xhci") {
+        "nec-xhci"
+    } else {
+        "qemu-xhci"
+    };
+
+    let mut edited = usb.clone();
+    edited.model = Some(want_model.to_string());
+    // Keep ports where they were; xhci models accept up to 15.
+
+    conn.update_controller(TEST_VM, "usb", usb.index, &edited)
+        .expect("update_controller");
+
+    let mid = conn.list_controllers(TEST_VM).expect("list mid");
+    let mid_usb = mid
+        .iter()
+        .find(|c| c.controller_type == "usb" && c.index == usb.index)
+        .expect("usb still present after update");
+    assert_eq!(mid_usb.model.as_deref(), Some(want_model));
+
+    // Restore original.
+    conn.update_controller(TEST_VM, "usb", usb.index, &usb)
+        .expect("restore original USB controller");
+
+    let after = conn.list_controllers(TEST_VM).expect("list after");
+    let after_usb = after
+        .iter()
+        .find(|c| c.controller_type == "usb" && c.index == usb.index)
+        .expect("usb still present after restore");
+    assert_eq!(after_usb.model, usb.model);
+    assert_eq!(after_usb.ports, usb.ports);
 }
