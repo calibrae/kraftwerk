@@ -49,6 +49,21 @@
 
   async function save() {
     if (!edit) return;
+    if (edit.firmware !== cfg.firmware) {
+      const confirmed = confirm(
+        "WARNING: switching firmware between BIOS and EFI on an existing VM\n" +
+        "almost always breaks the boot — the partition table layout, bootloader\n" +
+        "(grub-bios vs grub-efi), and EFI System Partition are different.\n\n" +
+        "Use this only on:\n" +
+        "  • a fresh VM that has not been installed yet, or\n" +
+        "  • a VM whose disk you are about to wipe and reinstall.\n\n" +
+        "Continue?"
+      );
+      if (!confirmed) {
+        edit.firmware = cfg.firmware;
+        return;
+      }
+    }
     busy = true; err = null;
     const patch = {
       firmware: edit.firmware !== cfg.firmware ? edit.firmware : null,
@@ -124,6 +139,12 @@
           <select bind:value={edit.firmware} disabled={busy}>
             {#each firmwareOptions as f}<option value={f}>{f.toUpperCase()}</option>{/each}
           </select>
+          {#if cfg && edit.firmware !== cfg.firmware}
+            <small class="hint warn">
+              Changing firmware breaks an installed VM. Only do this on a fresh
+              install or one you are about to wipe.
+            </small>
+          {/if}
         </label>
         {#if edit.firmware === "efi"}
           <label class="toggle">
@@ -283,4 +304,5 @@
   .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .saved-note { color: #34d399; font-size: 12px; margin-left: 8px; }
+  .hint.warn { color: #fbbf24; font-size: 11px; }
 </style>

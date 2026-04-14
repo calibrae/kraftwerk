@@ -52,6 +52,15 @@ pub struct FeatureFlags {
 }
 
 /// Editable patch. All fields optional — only set ones are applied.
+///
+/// **About `firmware`**: libvirt accepts changing this between `bios`
+/// and `efi`, and so do we — but for an *already-installed* guest the
+/// VM almost certainly will not boot afterwards. BIOS uses MBR + a
+/// real-mode bootloader (grub-bios/syslinux) in the first sector; EFI
+/// uses GPT + an ESP partition + grub-efi (or systemd-boot) and needs
+/// an NVRAM file. Switching is only useful before first install or
+/// when you are about to wipe and reinstall the disk. The frontend
+/// confirms with a warning before applying this field.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BootPatch {
     pub firmware: Option<String>,
