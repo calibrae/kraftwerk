@@ -2,20 +2,14 @@
   /*
    * SPICE console rendered via capsaicin-client in the Rust backend.
    *
-   * Event flow:
-   *   Rust capsaicin SpiceClient -> `spice:event` Tauri events -> queue
-   *   rAF tick drains the queue and issues one batched paint per frame.
+   * Mouse model: the SPICE server defaults to "server mode" — the guest
+   * draws its own cursor and expects relative motion events. capsaicin
+   * does not yet negotiate client (absolute) mode, so we send
+   * InputEvent::MouseMotion deltas from pointer-lock movementX/Y.
    *
-   * See capsaicin/inbox/virtmanager-rs-display-events.md for the full
-   * handling checklist. TL;DR:
-   *   - SurfaceCreated allocates a persistent framebuffer (with size cap)
-   *   - Region{Raw} honours stride (rows may be padded)
-   *   - Region{SolidColor} is a per-row fill
-   *   - StreamFrame blits identically to Region{Raw}
-   *   - CopyRect handles overlapping src/dest (canvas drawImage from
-   *     same canvas is spec-guaranteed memmove-safe)
-   *   - Mark is a present trigger (we rAF-batch instead)
-   *   - Reset wipes the framebuffer
+   * Release combo: Ctrl+Alt+Shift (three modifiers, none pressed as a
+   * single key). Browser-enforced ESC also releases but we don't
+   * advertise it — ESC is a valid guest key.
    */
   import { onMount, onDestroy, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -23,48 +17,56 @@
 
   let { vmName, onClose } = $props();
 
-  // Hostile-server guard: cap at 16384×16384 / 256 MiB (same as capsaicin-cli).
+  // Hostile-server guard: cap at 16384×16384 / 256 MiB.
   const MAX_DIM = 16384;
-  const MAX_PIXELS = 64 * 1024 * 1024; // 256 MiB of BGRA
+  const MAX_PIXELS = 64 * 1024 * 1024;
 
   let canvasEl = $state(null);
   let wrapperEl = $state(null);
   let connected = $state(false);
   let error = $state(null);
-  let surfaceInfo = $state(null);  // {width, height, format}
+  let surfaceInfo = $state(null);
   let streamCount = $state(0);
   let ctx = null;
   let unlisten = null;
   let aborted = false;
 
-  // Auth prompt state: shown when the SPICE server rejects our ticket.
   let needPassword = $state(false);
   let passwordInput = $state("");
-  let attempted = $state(false);
 
-  // Coalescing: events accumulate in this queue, a single rAF flushes.
+  // Focus / grab state.
+  let hasFocus = $state(false);
+  let grabbed = $state(false); // pointer-lock active
+
   const eventQueue = [];
   let rafHandle = null;
-  // Exposed for future debugging
-  let debugLog = false;
 
   onMount(async () => {
     unlisten = await listen("spice:event", (e) => enqueue(e.payload));
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("pointerlockerror", onPointerLockError);
     await connectSpice(null);
   });
 
+  onDestroy(async () => {
+    aborted = true;
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    if (unlisten) unlisten();
+    document.removeEventListener("pointerlockchange", onPointerLockChange);
+    document.removeEventListener("pointerlockerror", onPointerLockError);
+    if (document.pointerLockElement) document.exitPointerLock();
+    try { await invoke("close_spice"); } catch (_) {}
+  });
+
   async function connectSpice(password) {
-    attempted = true;
     error = null;
     try {
       await invoke("open_spice", { name: vmName, password });
       connected = true;
       needPassword = false;
     } catch (e) {
-      // Backend error payload has shape { code, message, suggestion }.
       if (e && e.code === "spice_auth_required") {
         needPassword = true;
-        // Keep any previously-typed password so "try again" after a typo is quick.
         error = passwordInput ? "Wrong password — try again." : null;
       } else {
         error = e?.message || JSON.stringify(e);
@@ -76,108 +78,47 @@
   async function submitPassword(ev) {
     ev?.preventDefault?.();
     await connectSpice(passwordInput);
-    if (connected) passwordInput = ""; // don't retain the secret once accepted
+    if (connected) passwordInput = "";
   }
-
-  onDestroy(async () => {
-    aborted = true;
-    if (rafHandle) cancelAnimationFrame(rafHandle);
-    if (unlisten) unlisten();
-    try { await invoke("close_spice"); } catch (_) {}
-  });
 
   function enqueue(evt) {
     if (aborted) return;
     eventQueue.push(evt);
-    if (rafHandle == null) {
-      rafHandle = requestAnimationFrame(flush);
-    }
+    if (rafHandle == null) rafHandle = requestAnimationFrame(flush);
   }
 
   async function flush() {
     rafHandle = null;
     const batch = eventQueue.splice(0, eventQueue.length);
-    for (const evt of batch) {
-      await handleEvent(evt);
-    }
-    // If events arrived while we were handling the batch, schedule next tick.
-    if (eventQueue.length > 0 && rafHandle == null) {
-      rafHandle = requestAnimationFrame(flush);
-    }
+    for (const evt of batch) await handleEvent(evt);
+    if (eventQueue.length > 0 && rafHandle == null) rafHandle = requestAnimationFrame(flush);
   }
 
   async function handleEvent(e) {
-    if (debugLog) console.debug("[spice]", e.kind, e);
     switch (e.kind) {
-      case "surface_created":
-        await handleSurfaceCreated(e);
-        break;
-
-      case "surface_destroyed":
-        // Only matters for non-primary; nothing to do for now.
-        break;
-
-      case "region":
-        if (!ctx) return;
-        paintRegion(e.rect, e.pixels, e.format);
-        break;
-
-      case "copy_rect":
-        if (!ctx) return;
-        paintCopyRect(e);
-        break;
-
-      case "stream_created":
-        streamCount++;
-        break;
-
-      case "stream_destroyed":
-        streamCount = Math.max(0, streamCount - 1);
-        break;
-
-      case "stream_frame":
-        if (!ctx) return;
-        // Per capsaicin contract: BGRA, top-down, stride = width*4.
-        paintRegion(e.destRect, e.pixels, "xrgb8888");
-        break;
-
+      case "surface_created": await handleSurfaceCreated(e); break;
+      case "surface_destroyed": break;
+      case "region": if (ctx) paintRegion(e.rect, e.pixels, e.format); break;
+      case "copy_rect": if (ctx) paintCopyRect(e); break;
+      case "stream_created": streamCount++; break;
+      case "stream_destroyed": streamCount = Math.max(0, streamCount - 1); break;
+      case "stream_frame": if (ctx) paintRegion(e.destRect, e.pixels, "xrgb8888"); break;
       case "reset":
-        // Server dropped all cache state. Clear our framebuffer so we
-        // don't composite stale pixels while waiting for fresh draws.
-        if (ctx && canvasEl) {
-          ctx.fillStyle = "#000";
-          ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
-        }
+        if (ctx && canvasEl) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvasEl.width, canvasEl.height); }
         break;
-
-      case "mark":
-        // Browser canvas presents lazily via rAF anyway; nothing to flush
-        // beyond the batching we already do. Left as a hook.
-        break;
-
-      case "mode":
-        // Legacy mode hint. SurfaceCreated is authoritative; ignore.
-        break;
-
+      case "mark": case "mode": break;
       case "closed":
         error = e.reason ?? "SPICE session closed";
         connected = false;
+        if (document.pointerLockElement) document.exitPointerLock();
         break;
     }
   }
 
   async function handleSurfaceCreated(e) {
-    if (!e.primary) {
-      // Secondary surface: tolerated miss. capsaicin will still drive the
-      // primary correctly; any draws into the secondary surface simply
-      // won't show up on our canvas. Acceptable per the contract.
-      return;
-    }
-    // Hostile-server guard.
+    if (!e.primary) return;
     const pixels = e.width * e.height;
-    if (e.width === 0 || e.height === 0 ||
-        e.width > MAX_DIM || e.height > MAX_DIM ||
-        pixels > MAX_PIXELS) {
+    if (e.width === 0 || e.height === 0 || e.width > MAX_DIM || e.height > MAX_DIM || pixels > MAX_PIXELS) {
       error = `Server reported unreasonable surface size ${e.width}×${e.height}`;
       return;
     }
@@ -201,25 +142,16 @@
   function paintRegion(rect, pixels, format) {
     const w = rect.width, h = rect.height;
     if (w <= 0 || h <= 0) return;
-
     if (pixels.kind === "solid_color") {
-      // argb packed as 32-bit AARRGGBB. Alpha ignored for XRGB surfaces.
       const argb = pixels.argb >>> 0;
-      const r = (argb >> 16) & 0xff;
-      const g = (argb >> 8) & 0xff;
-      const b = argb & 0xff;
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillStyle = `rgb(${(argb >> 16) & 0xff},${(argb >> 8) & 0xff},${argb & 0xff})`;
       ctx.fillRect(rect.left, rect.top, w, h);
       return;
     }
-
-    // Raw path. SPICE XRGB8888 wire format is little-endian 0x00RRGGBB →
-    // bytes (B, G, R, X). Canvas ImageData expects RGBA bytes.
     const src = decodeBase64(pixels.data_b64);
     const stride = pixels.stride;
     const image = ctx.createImageData(w, h);
     const dst = image.data;
-
     if (format === "xrgb8888" || format === "argb8888") {
       const forceAlpha = format === "xrgb8888";
       for (let y = 0; y < h; y++) {
@@ -228,19 +160,15 @@
         for (let x = 0; x < w; x++) {
           const si = srcOff + x * 4;
           const di = dstOff + x * 4;
-          dst[di] = src[si + 2];       // R
-          dst[di + 1] = src[si + 1];   // G
-          dst[di + 2] = src[si];       // B (SPICE wire is B,G,R,A little-endian)
+          dst[di] = src[si + 2];
+          dst[di + 1] = src[si + 1];
+          dst[di + 2] = src[si];
           dst[di + 3] = forceAlpha ? 255 : src[si + 3];
         }
       }
     } else {
-      // Unknown format: paint a red stripe so the bug is visible.
-      for (let i = 0; i < dst.length; i += 4) {
-        dst[i] = 255; dst[i+1] = 0; dst[i+2] = 0; dst[i+3] = 255;
-      }
+      for (let i = 0; i < dst.length; i += 4) { dst[i] = 255; dst[i+3] = 255; }
     }
-
     ctx.putImageData(image, rect.left, rect.top);
   }
 
@@ -248,16 +176,37 @@
     const { srcX, srcY, destRect } = e;
     const w = destRect.width, h = destRect.height;
     if (w <= 0 || h <= 0) return;
-    // Canvas spec: drawImage from the same canvas reads through an
-    // internal intermediate buffer, so overlapping src/dest is safe
-    // (memmove semantics). Verified in Firefox/Chromium/WebKit.
     ctx.drawImage(canvasEl, srcX, srcY, w, h, destRect.left, destRect.top, w, h);
   }
 
-  // ── Input: keyboard ───────────────────────────────────────────────────
-  //
-  // Map browser KeyboardEvent.code -> PC AT set-1 scancode. Extended keys
-  // are prefixed with 0xE0 → packed as `(0xE0 << 8) | code`.
+  // ── Focus / pointer lock ──────────────────────────────────────────────
+
+  function onPointerLockChange() {
+    grabbed = document.pointerLockElement === wrapperEl;
+  }
+  function onPointerLockError() {
+    error = "Could not grab pointer — the window may need focus first.";
+  }
+
+  async function grab() {
+    if (!wrapperEl) return;
+    wrapperEl.focus();
+    try { await wrapperEl.requestPointerLock(); } catch (_) {}
+  }
+  function release() {
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  // Clicking the canvas grabs input.
+  function canvasClick(ev) {
+    if (!connected) return;
+    if (!grabbed) {
+      ev.preventDefault();
+      grab();
+    }
+  }
+
+  // ── Keyboard ──────────────────────────────────────────────────────────
 
   const KEY_MAP = {
     Escape: 0x01, Digit1: 0x02, Digit2: 0x03, Digit3: 0x04, Digit4: 0x05,
@@ -285,8 +234,21 @@
     MetaLeft: 0xe05b, MetaRight: 0xe05c,
   };
 
+  function isReleaseCombo(ev) {
+    // Ctrl + Alt + Shift held together, any key. Fires on every keydown
+    // that matches; check on keydown so the user releases before the
+    // guest reacts to a stray event.
+    return ev.ctrlKey && ev.altKey && ev.shiftKey;
+  }
+
   function keyHandler(down) {
     return async (ev) => {
+      // Release combo intercept — only while grabbed.
+      if (down && grabbed && isReleaseCombo(ev)) {
+        ev.preventDefault();
+        release();
+        return;
+      }
       const code = KEY_MAP[ev.code];
       if (code == null) return;
       ev.preventDefault();
@@ -298,30 +260,22 @@
     };
   }
 
+  // ── Mouse: server mode, relative motion via pointer lock ─────────────
+
   let buttonsMask = 0;
 
   function browserToSpiceButton(b) {
-    // DOM button: 0=left, 1=middle, 2=right
     return b === 0 ? 1 : b === 1 ? 2 : b === 2 ? 3 : 0;
   }
 
-  function canvasCoords(ev) {
-    if (!canvasEl || !surfaceInfo) return null;
-    const rect = canvasEl.getBoundingClientRect();
-    const scaleX = surfaceInfo.width / rect.width;
-    const scaleY = surfaceInfo.height / rect.height;
-    const x = Math.round((ev.clientX - rect.left) * scaleX);
-    const y = Math.round((ev.clientY - rect.top) * scaleY);
-    if (x < 0 || y < 0 || x >= surfaceInfo.width || y >= surfaceInfo.height) return null;
-    return { x, y };
-  }
-
   async function mouseMove(ev) {
-    const pos = canvasCoords(ev);
-    if (!pos) return;
+    if (!grabbed) return;
+    const dx = ev.movementX | 0;
+    const dy = ev.movementY | 0;
+    if (dx === 0 && dy === 0) return;
     try {
       await invoke("spice_input", {
-        event: { kind: "mouse_position", x: pos.x, y: pos.y, buttons: buttonsMask },
+        event: { kind: "mouse_motion", dx, dy, buttons: buttonsMask },
       });
     } catch (_) {}
   }
@@ -329,6 +283,13 @@
   async function mouseDown(ev) {
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
+    // First click into the console: grab rather than send a press the
+    // user probably didn't intend for the guest.
+    if (connected && !grabbed) {
+      ev.preventDefault();
+      await grab();
+      return;
+    }
     buttonsMask |= 1 << (button - 1);
     ev.preventDefault();
     try {
@@ -339,6 +300,7 @@
   }
 
   async function mouseUp(ev) {
+    if (!grabbed) return;
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
     buttonsMask &= ~(1 << (button - 1));
@@ -350,6 +312,7 @@
   }
 
   async function wheel(ev) {
+    if (!grabbed) return;
     ev.preventDefault();
     const button = ev.deltaY < 0 ? 4 : 5;
     try {
@@ -358,20 +321,27 @@
     } catch (_) {}
   }
 
-  function focus() { wrapperEl?.focus(); }
+  function onWrapperFocus() { hasFocus = true; }
+  function onWrapperBlur()  { hasFocus = false; }
+
+  let statusLabel = $derived(
+    !connected ? "Disconnected" :
+    grabbed    ? "Grabbed · Ctrl+Alt+Shift to release" :
+    hasFocus   ? "Focused · click to grab" :
+                 "Not focused · click to interact"
+  );
+  let statusTone = $derived(
+    !connected ? "err" :
+    grabbed    ? "grabbed" :
+    hasFocus   ? "focused" : "idle"
+  );
 </script>
 
 <div class="spice-container">
   <div class="toolbar">
     <span class="title">
       SPICE Console — {vmName}
-      {#if connected && !error}
-        <span class="badge connected">Connected</span>
-      {:else if error}
-        <span class="badge err">Error</span>
-      {:else}
-        <span class="badge connecting">Connecting...</span>
-      {/if}
+      <span class="badge {statusTone}">{statusLabel}</span>
       {#if surfaceInfo}
         <span class="meta">{surfaceInfo.width}×{surfaceInfo.height} · {surfaceInfo.format}</span>
       {/if}
@@ -380,7 +350,13 @@
       {/if}
     </span>
     <div class="actions">
-      <button class="btn" onclick={focus}>Focus</button>
+      {#if connected}
+        {#if grabbed}
+          <button class="btn" onclick={release} title="Release pointer grab">Release</button>
+        {:else}
+          <button class="btn" onclick={grab} title="Grab pointer + keyboard">Grab</button>
+        {/if}
+      {/if}
       <button class="btn btn-close" onclick={onClose}>Disconnect</button>
     </div>
   </div>
@@ -408,8 +384,13 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     class="canvas-wrap"
+    class:grabbed
+    class:focused={hasFocus}
     bind:this={wrapperEl}
     tabindex="0"
+    onfocus={onWrapperFocus}
+    onblur={onWrapperBlur}
+    onclick={canvasClick}
     onkeydown={keyHandler(true)}
     onkeyup={keyHandler(false)}
     onmousemove={mouseMove}
@@ -419,6 +400,11 @@
     oncontextmenu={(e) => e.preventDefault()}
   >
     <canvas bind:this={canvasEl}></canvas>
+    {#if connected && !grabbed}
+      <div class="grab-overlay">
+        <div class="grab-hint">Click to grab input · Ctrl+Alt+Shift to release</div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -432,10 +418,11 @@
   .title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .meta { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', monospace; }
 
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
-  .connected { background: rgba(52, 211, 153, 0.15); color: #34d399; }
-  .connecting { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
-  .err { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+  .badge.idle     { background: var(--bg-button); color: var(--text-muted); }
+  .badge.focused  { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+  .badge.grabbed  { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+  .badge.err      { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
 
   .actions { display: flex; gap: 6px; }
   .btn {
@@ -445,6 +432,12 @@
   }
   .btn:hover { background: var(--bg-hover); }
   .btn-close:hover { background: #7f1d1d; color: #fca5a5; border-color: #7f1d1d; }
+  .btn-primary {
+    padding: 7px 14px; border: 1px solid var(--accent); border-radius: 6px;
+    background: var(--accent); color: white; font-size: 13px; cursor: pointer;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .err-banner {
     padding: 8px 16px; background: rgba(239, 68, 68, 0.1);
@@ -470,22 +463,32 @@
   .password-prompt input:focus {
     border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim);
   }
-  .btn-primary {
-    padding: 7px 14px; border: 1px solid var(--accent); border-radius: 6px;
-    background: var(--accent); color: white; font-size: 13px; font-family: inherit; cursor: pointer;
-  }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .canvas-wrap {
-    flex: 1; overflow: hidden; background: #000;
+    flex: 1; overflow: hidden; background: #000; position: relative;
     display: flex; align-items: center; justify-content: center;
     outline: none;
+    cursor: default;
   }
-  .canvas-wrap:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+  .canvas-wrap.focused { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.4); }
+  .canvas-wrap.grabbed { box-shadow: inset 0 0 0 2px rgba(52, 211, 153, 0.7); }
   canvas {
     max-width: 100%; max-height: 100%;
     image-rendering: crisp-edges;
-    cursor: crosshair;
+  }
+
+  .grab-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 24px;
+  }
+  .grab-hint {
+    background: rgba(22, 22, 42, 0.85);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    backdrop-filter: blur(6px);
   }
 </style>
