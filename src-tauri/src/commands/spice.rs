@@ -6,7 +6,7 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use capsaicin_client::{
-    ClientEvent, DisplayEvent, InputEvent, Rect, RegionPixels, SurfaceFormat,
+    ClientEvent, CursorEvent, DisplayEvent, InputEvent, MouseMode, Rect, RegionPixels, SurfaceFormat,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
@@ -74,9 +74,47 @@ fn surface_format_str(f: SurfaceFormat) -> &'static str {
     }
 }
 
+fn ser_u64_as_string<S: serde::Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&v.to_string())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpiceEventDto {
+    MouseMode {
+        #[serde(rename = "mode")]
+        mode: &'static str, // "client" | "server"
+    },
+    #[serde(rename_all = "camelCase")]
+    CursorSet {
+        x: i32,
+        y: i32,
+        hot_x: u16,
+        hot_y: u16,
+        width: u16,
+        height: u16,
+        /// Base64-encoded ARGB8888 pixels, top-down, stride = width * 4.
+        pixels_b64: String,
+        #[serde(rename = "unique", serialize_with = "ser_u64_as_string")]
+        unique: u64,
+        cacheable: bool,
+        visible: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    CursorSetFromCache {
+        x: i32,
+        y: i32,
+        #[serde(serialize_with = "ser_u64_as_string")]
+        unique: u64,
+        visible: bool,
+    },
+    CursorMove { x: i32, y: i32 },
+    CursorHide,
+    CursorInvalidateOne {
+        #[serde(serialize_with = "ser_u64_as_string")]
+        unique: u64,
+    },
+    CursorInvalidateAll,
     SurfaceCreated {
         id: u32,
         width: u32,
@@ -170,6 +208,28 @@ fn to_dto(evt: ClientEvent) -> Option<SpiceEventDto> {
             DisplayEvent::Reset => SpiceEventDto::Reset,
             DisplayEvent::Mode { width, height, .. } => SpiceEventDto::Mode { width, height },
             DisplayEvent::MonitorsConfig { .. } | DisplayEvent::UnhandledDraw { .. } => return None,
+        },
+        ClientEvent::Cursor(c) => match c {
+            CursorEvent::Set { x, y, hot_x, hot_y, width, height, pixels, unique, cacheable, visible } => {
+                SpiceEventDto::CursorSet {
+                    x, y, hot_x, hot_y, width, height,
+                    pixels_b64: BASE64.encode(&pixels),
+                    unique, cacheable, visible,
+                }
+            }
+            CursorEvent::SetFromCache { x, y, unique, visible } => {
+                SpiceEventDto::CursorSetFromCache { x, y, unique, visible }
+            }
+            CursorEvent::Move { x, y } => SpiceEventDto::CursorMove { x, y },
+            CursorEvent::Hide => SpiceEventDto::CursorHide,
+            CursorEvent::InvalidateOne { unique } => SpiceEventDto::CursorInvalidateOne { unique },
+            CursorEvent::InvalidateAll => SpiceEventDto::CursorInvalidateAll,
+        },
+        ClientEvent::MouseMode(m) => SpiceEventDto::MouseMode {
+            mode: match m {
+                MouseMode::Client => "client",
+                MouseMode::Server => "server",
+            },
         },
         ClientEvent::Closed(e) => SpiceEventDto::Closed {
             reason: e.map(|e| e.to_string()),

@@ -2,14 +2,17 @@
   /*
    * SPICE console rendered via capsaicin-client in the Rust backend.
    *
-   * Mouse model: the SPICE server defaults to "server mode" — the guest
-   * draws its own cursor and expects relative motion events. capsaicin
-   * does not yet negotiate client (absolute) mode, so we send
-   * InputEvent::MouseMotion deltas from pointer-lock movementX/Y.
+   * Mouse: server-advertised mode drives the input path.
+   *   - CLIENT mode: send absolute InputEvent::MousePosition in canvas
+   *     coords. Host OS cursor is the real one; we still composite the
+   *     guest cursor sprite for debugging parity? No — we skip it in
+   *     CLIENT mode to avoid a double-cursor.
+   *   - SERVER mode: pointer-lock grab + relative MouseMotion from
+   *     movementX/Y. Cursor channel sprite is composited on top because
+   *     the host cursor is locked/hidden.
    *
-   * Release combo: Ctrl+Alt+Shift (three modifiers, none pressed as a
-   * single key). Browser-enforced ESC also releases but we don't
-   * advertise it — ESC is a valid guest key.
+   * Release combo (SERVER mode only): Ctrl+Alt+Shift (three modifiers).
+   * Browser-enforced ESC also releases but we don't advertise it.
    */
   import { onMount, onDestroy, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -17,33 +20,42 @@
 
   let { vmName, onClose } = $props();
 
-  // Hostile-server guard: cap at 16384×16384 / 256 MiB.
   const MAX_DIM = 16384;
   const MAX_PIXELS = 64 * 1024 * 1024;
 
-  let canvasEl = $state(null);
+  let canvasEl = $state(null);     // framebuffer
+  let cursorEl = $state(null);     // cursor overlay canvas
   let wrapperEl = $state(null);
   let connected = $state(false);
   let error = $state(null);
   let surfaceInfo = $state(null);
   let streamCount = $state(0);
   let ctx = null;
+  let cursorCtx = null;
   let unlisten = null;
   let aborted = false;
 
   let needPassword = $state(false);
   let passwordInput = $state("");
 
-  // Focus / grab state.
-  let hasFocus = $state(false);
-  let grabbed = $state(false); // pointer-lock active
+  // Mouse mode drives the input strategy.
+  let mouseMode = $state("server"); // "client" | "server"
 
-  // Diagnostics: rolling counters so the user can tell whether input is
-  // being sent and whether display updates are coming back.
+  // Focus / grab (only meaningful in SERVER mode).
+  let hasFocus = $state(false);
+  let grabbed = $state(false);
+
+  // Cursor state.
+  const cursorCache = new Map(); // unique (string) -> { w, h, hotX, hotY, pixels: Uint8ClampedArray (RGBA) }
+  let cursorShown = $state(false);
+  let cursorHotX = $state(0);
+  let cursorHotY = $state(0);
+  let cursorX = $state(0);
+  let cursorY = $state(0);
+
+  // Diagnostics.
   let inputSent = $state(0);
   let displayRecv = $state(0);
-  let lastInputAt = $state(0);
-  let lastDisplayAt = $state(0);
 
   const eventQueue = [];
   let rafHandle = null;
@@ -103,17 +115,49 @@
 
   async function handleEvent(e) {
     switch (e.kind) {
+      // ── Display ────────────────────────────────────────────────────
       case "surface_created": await handleSurfaceCreated(e); break;
       case "surface_destroyed": break;
-      case "region": if (ctx) { paintRegion(e.rect, e.pixels, e.format); displayRecv++; lastDisplayAt = Date.now(); } break;
-      case "copy_rect": if (ctx) { paintCopyRect(e); displayRecv++; lastDisplayAt = Date.now(); } break;
-      case "stream_created": streamCount++; break;
+      case "region":     if (ctx) { paintRegion(e.rect, e.pixels, e.format); displayRecv++; } break;
+      case "copy_rect":  if (ctx) { paintCopyRect(e); displayRecv++; } break;
+      case "stream_created":  streamCount++; break;
       case "stream_destroyed": streamCount = Math.max(0, streamCount - 1); break;
-      case "stream_frame": if (ctx) { paintRegion(e.destRect, e.pixels, "xrgb8888"); displayRecv++; lastDisplayAt = Date.now(); } break;
+      case "stream_frame": if (ctx) { paintRegion(e.destRect, e.pixels, "xrgb8888"); displayRecv++; } break;
       case "reset":
         if (ctx && canvasEl) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvasEl.width, canvasEl.height); }
         break;
       case "mark": case "mode": break;
+
+      // ── Mouse mode ─────────────────────────────────────────────────
+      case "mouse_mode":
+        mouseMode = e.mode;
+        // When switching to CLIENT mode, release any pointer lock so
+        // the host OS cursor comes back naturally.
+        if (mouseMode === "client" && document.pointerLockElement) {
+          document.exitPointerLock();
+        }
+        // And wipe our cursor overlay since we won't composite in client mode.
+        if (mouseMode === "client") clearCursorOverlay();
+        break;
+
+      // ── Cursor channel ─────────────────────────────────────────────
+      case "cursor_set": handleCursorSet(e); break;
+      case "cursor_set_from_cache": handleCursorSetFromCache(e); break;
+      case "cursor_move":
+        cursorX = e.x; cursorY = e.y;
+        repaintCursor();
+        break;
+      case "cursor_hide":
+        cursorShown = false;
+        clearCursorOverlay();
+        break;
+      case "cursor_invalidate_one":
+        cursorCache.delete(String(e.unique));
+        break;
+      case "cursor_invalidate_all":
+        cursorCache.clear();
+        break;
+
       case "closed":
         error = e.reason ?? "SPICE session closed";
         connected = false;
@@ -131,12 +175,16 @@
     }
     surfaceInfo = { width: e.width, height: e.height, format: e.format };
     await tick();
-    if (!canvasEl) return;
+    if (!canvasEl || !cursorEl) return;
     canvasEl.width = e.width;
     canvasEl.height = e.height;
+    cursorEl.width = e.width;
+    cursorEl.height = e.height;
     ctx = canvasEl.getContext("2d", { alpha: false });
+    cursorCtx = cursorEl.getContext("2d", { alpha: true });
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, e.width, e.height);
+    cursorCtx.clearRect(0, 0, e.width, e.height);
   }
 
   function decodeBase64(b64) {
@@ -186,7 +234,83 @@
     ctx.drawImage(canvasEl, srcX, srcY, w, h, destRect.left, destRect.top, w, h);
   }
 
-  // ── Focus / pointer lock ──────────────────────────────────────────────
+  // ── Cursor channel handling ──────────────────────────────────────────
+  //
+  // Capsaicin delivers sprite pixels as ARGB8888 top-down with
+  // stride = width*4. We convert once into Canvas RGBA (byte-swap) and
+  // store in the cache keyed by the unique id (string — u64 doesn't fit
+  // in JS number). Rendering = putImageData at (x - hot_x, y - hot_y).
+
+  function argbToCanvasRgba(src, width, height) {
+    const dst = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0, n = dst.length; i < n; i += 4) {
+      // src ARGB8888 little-endian on wire = bytes B,G,R,A
+      dst[i]     = src[i + 2];
+      dst[i + 1] = src[i + 1];
+      dst[i + 2] = src[i];
+      dst[i + 3] = src[i + 3];
+    }
+    return dst;
+  }
+
+  function handleCursorSet(e) {
+    const unique = String(e.unique);
+    let sprite = null;
+    if (e.pixelsB64 && e.width > 0 && e.height > 0) {
+      const raw = decodeBase64(e.pixelsB64);
+      if (raw.length >= e.width * e.height * 4) {
+        sprite = {
+          w: e.width, h: e.height,
+          hotX: e.hotX, hotY: e.hotY,
+          pixels: argbToCanvasRgba(raw, e.width, e.height),
+        };
+        if (e.cacheable) cursorCache.set(unique, sprite);
+      }
+    }
+    if (sprite) setActiveCursor(sprite, e.x, e.y, e.visible);
+    else {
+      cursorShown = e.visible && false; // no decodable sprite = hidden
+      clearCursorOverlay();
+    }
+  }
+
+  function handleCursorSetFromCache(e) {
+    const sprite = cursorCache.get(String(e.unique));
+    if (!sprite) return; // cache miss — swallow silently
+    setActiveCursor(sprite, e.x, e.y, e.visible);
+  }
+
+  let activeSprite = null;
+
+  function setActiveCursor(sprite, x, y, visible) {
+    activeSprite = sprite;
+    cursorHotX = sprite.hotX;
+    cursorHotY = sprite.hotY;
+    cursorX = x; cursorY = y;
+    cursorShown = visible;
+    repaintCursor();
+  }
+
+  function clearCursorOverlay() {
+    if (cursorCtx && cursorEl) {
+      cursorCtx.clearRect(0, 0, cursorEl.width, cursorEl.height);
+    }
+  }
+
+  function repaintCursor() {
+    if (!cursorCtx || !cursorEl) return;
+    cursorCtx.clearRect(0, 0, cursorEl.width, cursorEl.height);
+    if (mouseMode === "client") return; // host OS draws the real cursor
+    if (!cursorShown || !activeSprite) return;
+    const { w, h, pixels } = activeSprite;
+    const dx = cursorX - cursorHotX;
+    const dy = cursorY - cursorHotY;
+    // Build a one-off ImageData and blit.
+    const img = new ImageData(new Uint8ClampedArray(pixels), w, h);
+    cursorCtx.putImageData(img, dx, dy);
+  }
+
+  // ── Focus / pointer lock ─────────────────────────────────────────────
 
   function onPointerLockChange() {
     grabbed = document.pointerLockElement === wrapperEl;
@@ -204,16 +328,14 @@
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  // Clicking the canvas grabs input.
-  function canvasClick(ev) {
-    if (!connected) return;
-    if (!grabbed) {
-      ev.preventDefault();
-      grab();
-    }
+  // ── Input helpers ────────────────────────────────────────────────────
+
+  async function sendInput(event) {
+    inputSent++;
+    try { await invoke("spice_input", { event }); } catch (_) {}
   }
 
-  // ── Keyboard ──────────────────────────────────────────────────────────
+  // ── Keyboard ─────────────────────────────────────────────────────────
 
   const KEY_MAP = {
     Escape: 0x01, Digit1: 0x02, Digit2: 0x03, Digit3: 0x04, Digit4: 0x05,
@@ -241,17 +363,11 @@
     MetaLeft: 0xe05b, MetaRight: 0xe05c,
   };
 
-  function isReleaseCombo(ev) {
-    // Ctrl + Alt + Shift held together, any key. Fires on every keydown
-    // that matches; check on keydown so the user releases before the
-    // guest reacts to a stray event.
-    return ev.ctrlKey && ev.altKey && ev.shiftKey;
-  }
-
   function keyHandler(down) {
     return async (ev) => {
-      // Release combo intercept — only while grabbed.
-      if (down && grabbed && isReleaseCombo(ev)) {
+      // SERVER-mode only: release combo intercept.
+      if (down && mouseMode === "server" && grabbed &&
+          ev.ctrlKey && ev.altKey && ev.shiftKey) {
         ev.preventDefault();
         release();
         return;
@@ -263,28 +379,41 @@
     };
   }
 
-  // ── Mouse: server mode, relative motion via pointer lock ─────────────
+  // ── Mouse (mode-aware) ───────────────────────────────────────────────
 
   let buttonsMask = 0;
 
-  function browserToSpiceButton(b) {
-    return b === 0 ? 1 : b === 1 ? 2 : b === 2 ? 3 : 0;
+  function browserToSpiceButton(b) { return b === 0 ? 1 : b === 1 ? 2 : b === 2 ? 3 : 0; }
+
+  function canvasCoords(ev) {
+    if (!canvasEl || !surfaceInfo) return null;
+    const rect = canvasEl.getBoundingClientRect();
+    const scaleX = surfaceInfo.width / rect.width;
+    const scaleY = surfaceInfo.height / rect.height;
+    const x = Math.round((ev.clientX - rect.left) * scaleX);
+    const y = Math.round((ev.clientY - rect.top) * scaleY);
+    if (x < 0 || y < 0 || x >= surfaceInfo.width || y >= surfaceInfo.height) return null;
+    return { x, y };
   }
 
   async function mouseMove(ev) {
-    if (!grabbed) return;
-    const dx = ev.movementX | 0;
-    const dy = ev.movementY | 0;
-    if (dx === 0 && dy === 0) return;
-    await sendInput({ kind: "mouse_motion", dx, dy, buttons: buttonsMask });
+    if (mouseMode === "client") {
+      const pos = canvasCoords(ev);
+      if (!pos) return;
+      await sendInput({ kind: "mouse_position", x: pos.x, y: pos.y, buttons: buttonsMask });
+    } else {
+      if (!grabbed) return;
+      const dx = ev.movementX | 0;
+      const dy = ev.movementY | 0;
+      if (dx === 0 && dy === 0) return;
+      await sendInput({ kind: "mouse_motion", dx, dy, buttons: buttonsMask });
+    }
   }
 
   async function mouseDown(ev) {
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
-    // First click into the console: grab rather than send a press the
-    // user probably didn't intend for the guest.
-    if (connected && !grabbed) {
+    if (mouseMode === "server" && connected && !grabbed) {
       ev.preventDefault();
       await grab();
       return;
@@ -295,7 +424,7 @@
   }
 
   async function mouseUp(ev) {
-    if (!grabbed) return;
+    if (mouseMode === "server" && !grabbed) return;
     const button = browserToSpiceButton(ev.button);
     if (button === 0) return;
     buttonsMask &= ~(1 << (button - 1));
@@ -303,21 +432,11 @@
   }
 
   async function wheel(ev) {
-    if (!grabbed) return;
+    if (mouseMode === "server" && !grabbed) return;
     ev.preventDefault();
     const button = ev.deltaY < 0 ? 4 : 5;
     await sendInput({ kind: "mouse_press", button, buttons: buttonsMask });
     await sendInput({ kind: "mouse_release", button, buttons: buttonsMask });
-  }
-
-
-
-  async function sendInput(event) {
-    inputSent++;
-    lastInputAt = Date.now();
-    try {
-      await invoke("spice_input", { event });
-    } catch (_) {}
   }
 
   function onWrapperFocus() { hasFocus = true; }
@@ -325,12 +444,14 @@
 
   let statusLabel = $derived(
     !connected ? "Disconnected" :
+    mouseMode === "client" ? "Client mode · single cursor" :
     grabbed    ? "Grabbed · Ctrl+Alt+Shift to release" :
     hasFocus   ? "Focused · click to grab" :
                  "Not focused · click to interact"
   );
   let statusTone = $derived(
     !connected ? "err" :
+    mouseMode === "client" ? "grabbed" :
     grabbed    ? "grabbed" :
     hasFocus   ? "focused" : "idle"
   );
@@ -348,13 +469,13 @@
         <span class="meta">{streamCount} stream{streamCount === 1 ? "" : "s"}</span>
       {/if}
       {#if connected}
-        <span class="meta" title="Input events sent / display events received">
+        <span class="meta" title="Input events sent · display events received">
           ↑{inputSent} · ↓{displayRecv}
         </span>
       {/if}
     </span>
     <div class="actions">
-      {#if connected}
+      {#if connected && mouseMode === "server"}
         {#if grabbed}
           <button class="btn" onclick={release} title="Release pointer grab">Release</button>
         {:else}
@@ -373,13 +494,7 @@
     <form class="password-prompt" onsubmit={submitPassword}>
       <label>
         <span>SPICE password</span>
-        <input
-          type="password"
-          bind:value={passwordInput}
-          placeholder="Enter the VM's SPICE password"
-          autocomplete="off"
-          autofocus
-        />
+        <input type="password" bind:value={passwordInput} placeholder="Enter the VM's SPICE password" autocomplete="off" autofocus />
       </label>
       <button type="submit" class="btn btn-primary" disabled={!passwordInput}>Connect</button>
     </form>
@@ -390,11 +505,11 @@
     class="canvas-wrap"
     class:grabbed
     class:focused={hasFocus}
+    class:client-mode={mouseMode === "client"}
     bind:this={wrapperEl}
     tabindex="0"
     onfocus={onWrapperFocus}
     onblur={onWrapperBlur}
-    onclick={canvasClick}
     onkeydown={keyHandler(true)}
     onkeyup={keyHandler(false)}
     onmousemove={mouseMove}
@@ -403,8 +518,11 @@
     onwheel={wheel}
     oncontextmenu={(e) => e.preventDefault()}
   >
-    <canvas bind:this={canvasEl}></canvas>
-    {#if connected && !grabbed}
+    <div class="canvas-stack">
+      <canvas bind:this={canvasEl}></canvas>
+      <canvas bind:this={cursorEl} class="cursor-overlay"></canvas>
+    </div>
+    {#if connected && mouseMode === "server" && !grabbed}
       <div class="grab-overlay">
         <div class="grab-hint">Click to grab input · Ctrl+Alt+Shift to release</div>
       </div>
@@ -454,9 +572,7 @@
     border-bottom: 1px solid var(--border);
     display: flex; gap: 12px; align-items: flex-end; flex-shrink: 0;
   }
-  .password-prompt label {
-    display: flex; flex-direction: column; gap: 4px; flex: 1;
-  }
+  .password-prompt label { display: flex; flex-direction: column; gap: 4px; flex: 1; }
   .password-prompt label span {
     font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;
   }
@@ -476,9 +592,23 @@
   }
   .canvas-wrap.focused { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.4); }
   .canvas-wrap.grabbed { box-shadow: inset 0 0 0 2px rgba(52, 211, 153, 0.7); }
+  .canvas-wrap.client-mode { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.3); }
+
+  .canvas-stack {
+    position: relative;
+    max-width: 100%; max-height: 100%;
+    display: inline-block;
+  }
   canvas {
+    display: block;
     max-width: 100%; max-height: 100%;
     image-rendering: crisp-edges;
+  }
+  .cursor-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
   }
 
   .grab-overlay {

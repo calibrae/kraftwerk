@@ -1120,6 +1120,9 @@ fn test_spice_session_to_prod_brokers() {
                         ClientEvent::Display(_) => {
                             saw_any_display_event = true;
                         }
+                        ClientEvent::Cursor(_) | ClientEvent::MouseMode(_) => {
+                            // New sub-channel events; ignore for the handshake test.
+                        }
                         ClientEvent::Closed(err) => {
                             panic!("SPICE connection closed prematurely: {err:?}");
                         }
