@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Homebrew's libvirt is signed by its own ad-hoc / Homebrew team ID,
+         not ours, so the notarized hardened-runtime app cannot load it
+         without disable-library-validation. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Allow JIT for the WebKit view (Tauri's default behavior). -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Allow unsigned executable memory for WASM (crytter / capsaicin). -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>
