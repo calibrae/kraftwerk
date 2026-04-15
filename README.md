@@ -63,6 +63,37 @@ Point at your hypervisor via the connection dialog; URI shape is
 `qemu+ssh://user@host/system`. The app remembers connections across
 launches.
 
+## Releases
+
+Pre-built bundles are produced by CI for **Linux** (AppImage, deb, rpm)
+and **macOS Apple Silicon** (signed + notarized DMG). Grab them from
+the [releases page](https://github.com/calibrae/kraftwerk/releases).
+
+Windows is built best-effort (libvirt-on-Windows is second-class; the
+bundle is not signed).
+
+### Intel Macs — build from source
+
+GitHub retired free Intel macOS CI runners in early 2026, so we no
+longer ship an x86_64 DMG. Intel Macs can still build locally:
+
+```bash
+# Install Intel Homebrew alongside Apple Silicon Homebrew.
+arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Install libvirt via the Intel brew (goes to /usr/local).
+arch -x86_64 /usr/local/bin/brew install libvirt pkg-config
+
+# Point cargo at the Intel libvirt during the build.
+cd kraftwerk
+npm install
+PKG_CONFIG_PATH=/usr/local/opt/libvirt/lib/pkgconfig \
+  npm run tauri build -- --target x86_64-apple-darwin
+```
+
+The DMG lands in `src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/`.
+It is not code-signed; you'll need to `xattr -dr com.apple.quarantine`
+the `.app` on first launch, or sign it with your own Developer ID.
+
 ## Architecture in one paragraph
 
 Tauri app with a Rust backend and a Svelte frontend. Rust holds the

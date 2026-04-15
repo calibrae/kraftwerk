@@ -35,9 +35,11 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
 
-  build-macos-arm:
-    # Self-hosted on speedwagon — Developer ID cert preinstalled in the
-    # login keychain. Apple Silicon native (aarch64).
+  build-macos:
+    # Apple Silicon only. GitHub retired free Intel runners in early 2026
+    # and building Intel from this self-hosted arm64 runner would need
+    # Intel Homebrew + libvirt locally. Manual x86_64 build instructions
+    # live in the README for anyone who needs one.
     name: macos aarch64 signed bundle
     runs-on: [self-hosted, macOS, mini]
     env:
@@ -66,57 +68,6 @@ jobs:
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app.tar.gz
 
-  build-macos-intel:
-    # GitHub-hosted macos-13 (Intel x86_64). Imports the Developer ID
-    # cert from secrets into a temp keychain for this job.
-    name: macos x86_64 signed bundle
-    runs-on: macos-13
-    env:
-      APPLE_SIGNING_IDENTITY: 'Developer ID Application: Nico Bousquet (XJQQCN392F)'
-      APPLE_API_KEY: Z43Q26MB7Y
-      APPLE_API_KEY_PATH: ${{ github.workspace }}/.apple-api-key.p8
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_TEAM_ID: XJQQCN392F
-    steps:
-      - uses: actions/checkout@v4
-      - name: install libvirt (x86_64 homebrew)
-        run: brew install libvirt pkg-config
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: src-tauri }
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm' }
-      - run: npm ci
-      - name: import Developer ID cert into temp keychain
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          CERT_PATH=$RUNNER_TEMP/cert.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-      - name: write ASC API key
-        env:
-          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
-        run: |
-          printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY_PATH"
-          chmod 600 "$APPLE_API_KEY_PATH"
-      - name: tauri build (sign + notarize)
-        run: npm run tauri build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: kraftwerk-macos-x86_64
-          path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-
   build-windows:
     name: windows bundle (experimental)
     runs-on: windows-latest
@@ -137,7 +88,7 @@ jobs:
 
   release:
     name: publish release
-    needs: [build-linux, build-macos-arm, build-macos-intel, build-windows]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:

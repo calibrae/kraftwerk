@@ -1,6 +1,6 @@
 [package]
 name = "kraftwerk"
-version = "0.1.4"
+version = "0.1.5"
 description = "Cross-platform virtual machine manager using libvirt"
 authors = ["Nicolas Bousquet"]
 edition = "2021"
