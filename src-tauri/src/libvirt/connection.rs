@@ -1,4 +1,6 @@
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
+use std::time::Duration;
 use virt::connect::Connect;
 use virt::domain::Domain;
 use virt::network::Network;
@@ -28,10 +30,23 @@ impl LibvirtConnection {
     }
 
     /// Open a connection to the given libvirt URI. Blocking.
+    ///
+    /// For \`qemu+ssh://\` URIs we do a 5-second TCP pre-flight on the SSH
+    /// port before handing off to libvirt. Without this, an offline
+    /// hypervisor wedges the caller for ~2 minutes on the system TCP
+    /// timeout, which freezes the Tauri IPC worker.
     pub fn open(&self, uri: &str) -> Result<(), VirtManagerError> {
-        log::info!("Opening connection to {uri}");
+        if let Some((host, port)) = parse_ssh_host_port(uri) {
+            let addr = (host.as_str(), port)
+                .to_socket_addrs()
+                .map_err(|e| VirtManagerError::Timeout { host: format!("{host}: {e}") })?
+                .next()
+                .ok_or_else(|| VirtManagerError::Timeout { host: host.clone() })?;
+            TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+                .map_err(|_| VirtManagerError::Timeout { host: format!("{host}:{port}") })?;
+        }
         let conn = Connect::open(Some(uri)).map_err(|e| VirtManagerError::ConnectionFailed {
-            host: uri.to_string(),
+            host: redact_uri(uri),
             reason: e.to_string(),
         })?;
         let mut guard = self.inner.lock().unwrap();
@@ -39,7 +54,6 @@ impl LibvirtConnection {
             let _ = old.close();
         }
         *guard = Some(conn);
-        log::info!("Connected successfully to {uri}");
         Ok(())
     }
 
@@ -1767,5 +1781,48 @@ impl Drop for LibvirtConnection {
                 let _ = conn.close();
             }
         }
+    }
+}
+
+
+/// Extract (host, port) from a \`qemu+ssh://[user@]host[:port]/...\` URI.
+/// Returns None for non-ssh URIs (e.g. \`qemu:///system\`).
+fn parse_ssh_host_port(uri: &str) -> Option<(String, u16)> {
+    let rest = uri.strip_prefix("qemu+ssh://")?;
+    let authority = rest.split('/').next()?;
+    // Strip optional \`user@\`.
+    let host_part = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    // Split optional \`:port\`.
+    let (host, port) = match host_part.rsplit_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse().unwrap_or(22)),
+        None => (host_part.to_string(), 22u16),
+    };
+    if host.is_empty() { None } else { Some((host, port)) }
+}
+
+/// Redact user-info from a URI before logging/reporting.
+fn redact_uri(uri: &str) -> String {
+    if let Some(rest) = uri.strip_prefix("qemu+ssh://") {
+        if let Some(idx) = rest.find('@') {
+            return format!("qemu+ssh://***@{}", &rest[idx + 1..]);
+        }
+    }
+    uri.to_string()
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+    #[test]
+    fn parses_host_port_variants() {
+        assert_eq!(parse_ssh_host_port("qemu+ssh://host/system"), Some(("host".into(), 22)));
+        assert_eq!(parse_ssh_host_port("qemu+ssh://user@host/system"), Some(("host".into(), 22)));
+        assert_eq!(parse_ssh_host_port("qemu+ssh://user@host:2222/system"), Some(("host".into(), 2222)));
+        assert_eq!(parse_ssh_host_port("qemu:///system"), None);
+    }
+    #[test]
+    fn redact_strips_userinfo() {
+        assert_eq!(redact_uri("qemu+ssh://alice@host/system"), "qemu+ssh://***@host/system");
+        assert_eq!(redact_uri("qemu:///system"), "qemu:///system");
     }
 }

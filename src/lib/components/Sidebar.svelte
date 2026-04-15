@@ -50,11 +50,17 @@
     <ul class="connection-list">
       {#each appState.savedConnections as conn (conn.id)}
         {@const status = connectionStatus(conn.id)}
-        <li class="connection-item">
-          <div class="connection-header">
+        <li class="connection-item" class:current={appState.selectedConnectionId === conn.id}>
+          <div
+            class="connection-header"
+            role="button"
+            tabindex="0"
+            onclick={() => handleConnect(conn.id)}
+            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && handleConnect(conn.id)}
+          >
             <span class="status-dot" class:connected={status === "connected"} class:connecting={status === "connecting"} class:error={status === "error"}></span>
             <span class="connection-name">{conn.display_name}</span>
-            <div class="connection-actions">
+            <div class="connection-actions" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="toolbar" tabindex="-1">
               {#if status === "connected"}
                 <button class="btn-tiny" onclick={() => refreshVms()} title="Refresh">&#8635;</button>
                 <button class="btn-tiny" onclick={() => handleDisconnect(conn.id)} title="Disconnect">&#x2715;</button>
