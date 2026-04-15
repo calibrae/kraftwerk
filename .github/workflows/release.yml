@@ -61,14 +61,16 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
-      - name: tauri build (sign + notarize)
-        run: npm run tauri build
+      - name: tauri build (universal, sign + notarize)
+        # Universal binary: single DMG/.app that runs natively on both
+        # Apple Silicon and Intel Macs.
+        run: npm run tauri build -- --target universal-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
           name: kraftwerk-macos
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
 
   build-windows:
     name: windows bundle (experimental)

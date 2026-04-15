@@ -28,6 +28,17 @@
   let showSpice = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
 
+  // Tear down any open console when switching VMs — otherwise the old
+  // SpiceConsole/VncConsole/SerialConsole component stays alive with the
+  // previous VM's SSH tunnel + graphics channel.
+  $effect(() => {
+    // Read selectedVm.name so the effect re-runs on VM change.
+    const _name = appState.selectedVm?.name;
+    showSpice = false;
+    showVnc = false;
+    showConsole = false;
+  });
+
   const stateColors = {
     running: "#34d399",
     paused: "#fbbf24",
@@ -81,11 +92,17 @@
 
 <div class="detail">
   {#if showSpice && SpiceConsole && appState.selectedVm}
-    <SpiceConsole vmName={appState.selectedVm.name} onClose={closeSpice} />
+    {#key appState.selectedVm.name}
+      <SpiceConsole vmName={appState.selectedVm.name} onClose={closeSpice} />
+    {/key}
   {:else if showVnc && VncConsole && appState.selectedVm}
-    <VncConsole vmName={appState.selectedVm.name} onClose={closeVnc} />
+    {#key appState.selectedVm.name}
+      <VncConsole vmName={appState.selectedVm.name} onClose={closeVnc} />
+    {/key}
   {:else if showConsole && appState.selectedVm}
-    <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
+    {#key appState.selectedVm.name}
+      <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
+    {/key}
   {:else if !appState.selectedVm}
     <div class="empty-detail">
       {#if appState.isConnected}
