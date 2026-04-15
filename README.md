@@ -1,5 +1,10 @@
 # kraftwerk
 
+[![CI](https://github.com/calibrae/kraftwerk/actions/workflows/ci.yml/badge.svg)](https://github.com/calibrae/kraftwerk/actions/workflows/ci.yml)
+[![Release](https://github.com/calibrae/kraftwerk/actions/workflows/release.yml/badge.svg)](https://github.com/calibrae/kraftwerk/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/calibrae/kraftwerk)](https://github.com/calibrae/kraftwerk/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+
 Cross-platform desktop manager for remote KVM/QEMU virtual machines.
 Rust + Tauri + Svelte, speaking libvirt over SSH.
 
@@ -71,6 +76,23 @@ the [releases page](https://github.com/calibrae/kraftwerk/releases).
 
 Windows is built best-effort (libvirt-on-Windows is second-class; the
 bundle is not signed).
+
+### Client-side libvirt is required
+
+Kraftwerk links against `libvirt` via FFI, so the **client machine**
+needs it installed even when the hypervisor is remote. The bundle is
+not self-contained.
+
+| Platform | Install |
+|---|---|
+| macOS (Apple Silicon) | `brew install libvirt` |
+| macOS (Intel, local build) | `arch -x86_64 /usr/local/bin/brew install libvirt` |
+| Debian / Ubuntu (.deb) | `sudo apt install libvirt0` (pulled in automatically) |
+| Fedora / RHEL (.rpm) | `sudo dnf install libvirt-libs` (pulled in automatically) |
+| Arch (AppImage) | `sudo pacman -S libvirt` |
+
+On first launch the app will crash with a `Library not loaded: libvirt.0.dylib`
+error if libvirt is missing — install it, then reopen.
 
 ### Intel Macs — build from source
 
