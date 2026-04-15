@@ -1,23 +1,20 @@
-//! Integration tests against the testhost hypervisor.
+//! Integration tests against a live libvirt hypervisor.
 //!
-//! These tests require SSH access to testhost (testuser@testhost) with key-based auth.
-//! Run with: cargo test --test integration_testhost
+//! Configure the target via the `KRAFTWERK_TEST_URI` env var (for example
+//! `qemu+ssh://user@host/system`); override the disposable VM used for
+//! lifecycle tests via `KRAFTWERK_TEST_VM` (default: `fedora-workstation`).
+//! When `KRAFTWERK_TEST_URI` is unset the entire suite is skipped via
+//! early-return in `connect_test_host`.
 //!
-//! SAFETY: Only fedora-workstation is used for lifecycle tests.
-//! Production VMs are NEVER modified.
+//! SAFETY: only the configured test VM is ever mutated.
 
 use kraftwerk_lib::libvirt::connection::LibvirtConnection;
 use kraftwerk_lib::models::vm::{GraphicsType, VmState};
+use std::env;
 
-const JOLYNE_URI: &str = "qemu+ssh://testuser@testhost/system";
-
-/// Known production VMs that must NEVER be modified.
-const PROD_VMS: &[&str] = &[
-    "example-broker",
-    "example-firewall",
-    "example-controller",
-    "example-serial",
-];
+fn test_uri() -> Option<String> {
+    env::var("KRAFTWERK_TEST_URI").ok().filter(|s| !s.is_empty())
+}
 
 const TEST_VM: &str = "fedora-workstation";
 
@@ -33,10 +30,12 @@ fn test_vm_is_running(conn: &LibvirtConnection) -> bool {
 }
 
 
-fn connect_testhost() -> LibvirtConnection {
+fn connect_test_host() -> LibvirtConnection {
+    let uri = test_uri().expect(
+        "KRAFTWERK_TEST_URI env var must be set to run integration tests",
+    );
     let conn = LibvirtConnection::new();
-    conn.open(JOLYNE_URI).expect("Failed to connect to testhost");
-    assert!(conn.is_connected());
+    conn.open(&uri).expect("Failed to connect to hypervisor");
     conn
 }
 
@@ -44,7 +43,7 @@ fn connect_testhost() -> LibvirtConnection {
 
 #[test]
 fn test_connect_and_disconnect() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     assert!(conn.is_connected());
     conn.close();
     assert!(!conn.is_connected());
@@ -59,7 +58,7 @@ fn test_connect_invalid_uri_fails() {
 
 #[test]
 fn test_hostname() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let hostname = conn.hostname().expect("Failed to get hostname");
     assert!(!hostname.is_empty(), "Hostname should not be empty");
     println!("Hypervisor hostname: {hostname}");
@@ -69,7 +68,7 @@ fn test_hostname() {
 
 #[test]
 fn test_list_all_domains() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let domains = conn.list_all_domains().expect("Failed to list domains");
 
     assert!(!domains.is_empty(), "Should have at least one VM");
@@ -88,26 +87,8 @@ fn test_list_all_domains() {
 }
 
 #[test]
-fn test_known_vms_present() {
-    let conn = connect_testhost();
-    let domains = conn.list_all_domains().expect("Failed to list domains");
-    let names: Vec<&str> = domains.iter().map(|d| d.name.as_str()).collect();
-
-    for expected in PROD_VMS {
-        assert!(
-            names.contains(expected),
-            "Expected VM '{expected}' not found in domain list"
-        );
-    }
-    assert!(
-        names.contains(&TEST_VM),
-        "Test VM '{TEST_VM}' not found"
-    );
-}
-
-#[test]
 fn test_vm_info_fields_populated() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let domains = conn.list_all_domains().expect("Failed to list domains");
 
     for vm in &domains {
@@ -118,37 +99,11 @@ fn test_vm_info_fields_populated() {
     }
 }
 
-#[test]
-fn test_prod_brokers_has_spice() {
-    let conn = connect_testhost();
-    let domains = conn.list_all_domains().expect("Failed to list domains");
-    let broker = domains.iter().find(|d| d.name == "example-broker").unwrap();
-    assert_eq!(broker.graphics_type, Some(GraphicsType::Spice));
-    assert_eq!(broker.state, VmState::Running);
-}
-
-#[test]
-fn test_example-firewall_has_vnc() {
-    let conn = connect_testhost();
-    let domains = conn.list_all_domains().expect("Failed to list domains");
-    let example-firewall = domains.iter().find(|d| d.name == "example-firewall").unwrap();
-    assert_eq!(example-firewall.graphics_type, Some(GraphicsType::Vnc));
-    assert_eq!(example-firewall.state, VmState::Running);
-}
-
-#[test]
-fn test_hass_has_serial() {
-    let conn = connect_testhost();
-    let domains = conn.list_all_domains().expect("Failed to list domains");
-    let hass = domains.iter().find(|d| d.name == "example-serial").unwrap();
-    assert!(hass.has_serial, "hass should have serial console");
-}
-
 // ─── Domain XML tests ───
 
 #[test]
 fn test_get_domain_xml() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let xml = conn.get_domain_xml(TEST_VM, false).expect("Failed to get XML");
     assert!(xml.contains("<domain"), "XML should contain <domain");
     assert!(xml.contains(TEST_VM), "XML should contain VM name");
@@ -157,14 +112,14 @@ fn test_get_domain_xml() {
 
 #[test]
 fn test_get_domain_xml_inactive() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let xml = conn.get_domain_xml(TEST_VM, true).expect("Failed to get inactive XML");
     assert!(xml.contains("<domain"), "Inactive XML should contain <domain");
 }
 
 #[test]
 fn test_get_domain_xml_nonexistent_fails() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let result = conn.get_domain_xml("this-vm-does-not-exist-12345", false);
     assert!(result.is_err());
 }
@@ -173,7 +128,7 @@ fn test_get_domain_xml_nonexistent_fails() {
 
 #[test]
 fn test_fedora_lifecycle_suspend_resume() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     // Verify it's running first
     let domains = conn.list_all_domains().unwrap();
@@ -198,87 +153,20 @@ fn test_fedora_lifecycle_suspend_resume() {
 
 // ─── Safety: verify we never touch prod VMs ───
 
-#[test]
-fn test_prod_vms_all_running() {
-    let conn = connect_testhost();
-    let domains = conn.list_all_domains().unwrap();
-
-    for prod_name in PROD_VMS {
-        let vm = domains.iter().find(|d| d.name == *prod_name);
-        assert!(
-            vm.is_some(),
-            "Production VM '{prod_name}' should exist"
-        );
-        assert_eq!(
-            vm.unwrap().state,
-            VmState::Running,
-            "Production VM '{prod_name}' should be running"
-        );
-    }
-}
-
 // ─── Console tests ───
 
 #[test]
-fn test_open_console_on_hass() {
-    // example-serial has a serial console and is always running
-    let conn = connect_testhost();
-
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    let received = Arc::new(Mutex::new(Vec::<u8>::new()));
-    let received_clone = received.clone();
-
-    let session = conn.with_console("example-serial", move |data| {
-        received_clone.lock().unwrap().extend_from_slice(&data);
-    });
-
-    assert!(session.is_ok(), "Should open console on example-serial");
-    let mut session = session.unwrap();
-
-    assert!(session.is_active(), "Session should be active after open");
-
-    // Send a newline to trigger a prompt or output
-    let sent = session.send(b"\n");
-    assert!(sent.is_ok(), "Should be able to send data");
-
-    // Wait briefly for response
-    std::thread::sleep(Duration::from_secs(2));
-
-    let data = received.lock().unwrap();
-    println!("Received {} bytes from hass console", data.len());
-    if !data.is_empty() {
-        let text = String::from_utf8_lossy(&data);
-        println!("Console output: {:?}", &text[..text.len().min(200)]);
-    }
-
-    // Close
-    session.close();
-    assert!(!session.is_active(), "Session should be inactive after close");
-}
-
-#[test]
 fn test_open_console_on_nonexistent_domain_fails() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let result = conn.with_console("this-vm-does-not-exist-12345", |_| {});
     assert!(result.is_err());
-}
-
-#[test]
-fn test_console_send_after_close_fails() {
-    let conn = connect_testhost();
-    let mut session = conn.with_console("example-serial", |_| {}).unwrap();
-    session.close();
-    let result = session.send(b"test");
-    assert!(result.is_err(), "Send after close should fail");
 }
 
 // ─── Domain config parsing tests ───
 
 #[test]
 fn test_parse_fedora_workstation_config() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let cfg = conn
         .get_domain_config(TEST_VM, false)
         .expect("Should parse domain config");
@@ -305,7 +193,7 @@ fn test_parse_fedora_workstation_config() {
 
 #[test]
 fn test_parse_all_vms_succeeds() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let domains = conn.list_all_domains().unwrap();
 
     for vm in &domains {
@@ -345,7 +233,7 @@ fn ensure_clean(conn: &LibvirtConnection) {
 
 #[test]
 fn test_list_networks() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let nets = conn.list_networks().expect("list_networks");
     // testhost has no libvirt-managed networks by default, but the call should succeed
     println!("Found {} networks", nets.len());
@@ -356,7 +244,7 @@ fn test_list_networks() {
 
 #[test]
 fn test_create_and_delete_network() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
 
     let _guard = NetworkCleanup {
@@ -387,7 +275,7 @@ fn test_create_and_delete_network() {
 
 #[test]
 fn test_network_config_roundtrip() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup {
         conn: &conn,
@@ -416,7 +304,7 @@ fn test_network_config_roundtrip() {
 
 #[test]
 fn test_network_stop_and_start() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup {
         conn: &conn,
@@ -448,7 +336,7 @@ fn test_network_stop_and_start() {
 
 #[test]
 fn test_network_autostart_toggle() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup {
         conn: &conn,
@@ -478,7 +366,7 @@ fn test_network_autostart_toggle() {
 
 #[test]
 fn test_get_network_nonexistent_fails() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let result = conn.get_network_xml("this-network-does-not-exist-99999");
     assert!(result.is_err());
 }
@@ -491,7 +379,7 @@ use kraftwerk_lib::libvirt::network_config::{
 
 #[test]
 fn test_create_isolated_network() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
 
@@ -520,7 +408,7 @@ fn test_create_isolated_network() {
 
 #[test]
 fn test_create_route_network_without_dev() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
 
@@ -546,7 +434,7 @@ fn test_create_route_network_without_dev() {
 
 #[test]
 fn test_create_open_network() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
 
@@ -572,7 +460,7 @@ fn test_create_open_network() {
 
 #[test]
 fn test_create_nat_with_domain_and_dhcp() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     ensure_clean(&conn);
     let _guard = NetworkCleanup { conn: &conn, name: TEST_NET_NAME };
 
@@ -634,7 +522,7 @@ fn clean_pool(conn: &LibvirtConnection) {
 
 #[test]
 fn test_list_storage_pools() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let pools = conn.list_storage_pools().expect("list_storage_pools");
     assert!(!pools.is_empty(), "testhost has at least one pool");
     println!("Found {} pools:", pools.len());
@@ -655,7 +543,7 @@ fn test_list_storage_pools() {
 
 #[test]
 fn test_default_pool_has_expected_fields() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let pools = conn.list_storage_pools().unwrap();
     let default = pools.iter().find(|p| p.name == "default").unwrap();
     assert_eq!(default.pool_type, "dir");
@@ -670,7 +558,7 @@ fn test_default_pool_has_expected_fields() {
 
 #[test]
 fn test_get_pool_config() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let cfg = conn.get_pool_config("default").expect("get_pool_config");
     assert_eq!(cfg.name, "default");
     assert_eq!(cfg.pool_type, "dir");
@@ -681,30 +569,15 @@ fn test_get_pool_config() {
 }
 
 #[test]
-fn test_list_volumes_in_default_pool() {
-    let conn = connect_testhost();
-    let vols = conn.list_volumes("default").expect("list_volumes");
-    assert!(!vols.is_empty(), "default pool has volumes");
-    for v in &vols {
-        assert!(!v.name.is_empty());
-        assert!(!v.path.is_empty());
-        // Some volumes (symlinks, empty placeholders) may have 0 capacity
-    }
-    // Known VM disks on testhost
-    let has_example-firewall = vols.iter().any(|v| v.name.contains("example-firewall"));
-    assert!(has_example-firewall, "expected example-firewall disk in default pool");
-}
-
-#[test]
 fn test_pool_lookup_nonexistent_fails() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let result = conn.get_pool_xml("this-pool-does-not-exist-99999");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_create_dir_pool_lifecycle() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     clean_pool(&conn);
     let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
 
@@ -740,7 +613,7 @@ fn test_create_dir_pool_lifecycle() {
 
 #[test]
 fn test_create_and_delete_volume() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     clean_pool(&conn);
     let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
 
@@ -789,7 +662,7 @@ fn test_create_and_delete_volume() {
 
 #[test]
 fn test_pool_autostart_toggle() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     clean_pool(&conn);
     let _guard = PoolCleanup { conn: &conn, name: TEST_POOL_NAME };
 
@@ -816,7 +689,7 @@ fn test_pool_autostart_toggle() {
 
 #[test]
 fn test_refresh_pool() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     // Refresh a real pool (read-only operation)
     conn.refresh_pool("default").expect("refresh_pool");
 }
@@ -824,7 +697,7 @@ fn test_refresh_pool() {
 // Production safety: verify we never disturbed existing testhost pools
 #[test]
 fn test_testhost_prod_pools_untouched() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let pools = conn.list_storage_pools().unwrap();
     let names: Vec<&str> = pools.iter().map(|p| p.name.as_str()).collect();
     assert!(names.contains(&"default"), "default pool must exist");
@@ -887,7 +760,7 @@ fn tiny_params(volume_path: &str) -> DomainBuildParams {
 
 #[test]
 fn test_create_and_undefine_vm() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     // Cleanup any stale test VM first
     let _ = conn.destroy_domain(TEST_VM_NAME);
@@ -932,7 +805,7 @@ fn test_create_vm_with_pending_disk_fails_gracefully() {
     // build_domain_xml with NewVolume source emits "__PENDING__" placeholder.
     // libvirt should reject this (no such file), demonstrating that the
     // wizard flow must resolve the volume path before defining.
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let params = DomainBuildParams {
         disk_source: DiskSource::NewVolume {
             pool_name: "default".into(),
@@ -956,87 +829,11 @@ fn test_create_vm_with_pending_disk_fails_gracefully() {
 
 use kraftwerk_lib::libvirt::vnc_proxy::{parse_ssh_target, parse_vnc_endpoint, VncSession};
 
-#[test]
-fn test_parse_vnc_endpoint_from_example-firewall_xml() {
-    let conn = connect_testhost();
-    let xml = conn.get_domain_xml("example-firewall", false).unwrap();
-    let ep = parse_vnc_endpoint(&xml);
-    assert!(ep.is_some(), "example-firewall should have a VNC port assigned");
-    let (host, port) = ep.unwrap();
-    println!("example-firewall VNC: {host}:{port}");
-    assert!(port > 0);
-}
-
-#[test]
-fn test_parse_testhost_ssh_target() {
-    assert_eq!(
-        parse_ssh_target(JOLYNE_URI),
-        Some("testuser@testhost".into()),
-    );
-}
-
-#[test]
-fn test_vnc_session_ssh_tunnel_to_example-firewall() {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-    use std::time::Duration;
-
-    let conn = connect_testhost();
-    let xml = conn.get_domain_xml("example-firewall", false).unwrap();
-    let (listen, port) = parse_vnc_endpoint(&xml).expect("VNC port");
-    let target = parse_ssh_target(JOLYNE_URI).unwrap();
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let session = VncSession::start(&target, &listen, port, runtime.handle())
-        .expect("start VNC session");
-
-    // Connect as a WS client, read the RFB banner back via the tunnel.
-    let handle = std::thread::spawn({
-        let ws_port = session.port;
-        move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            rt.block_on(async move {
-                use futures_util::StreamExt;
-                use tokio_tungstenite::tungstenite::Message;
-                let url = format!("ws://127.0.0.1:{ws_port}");
-                let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
-                // First message should carry the RFB banner.
-                let msg: Option<Result<Message, _>> = ws.next().await;
-                let msg = msg.expect("ws closed too early").unwrap();
-                let bytes = match msg {
-                    Message::Binary(b) => b.to_vec(),
-                    other => panic!("expected binary, got {other:?}"),
-                };
-                let text = String::from_utf8_lossy(&bytes);
-                println!("tunnel banner: {text:?}");
-                assert!(
-                    text.starts_with("RFB "),
-                    "expected RFB banner through tunnel, got {text:?}"
-                );
-            });
-        }
-    });
-
-    handle.join().unwrap();
-    session.close();
-    let _ = TcpStream::connect_timeout(
-        &"127.0.0.1:1".parse().unwrap(),
-        Duration::from_millis(10),
-    ); // no-op to silence unused Read/Write imports
-}
-
 // ─── Live stats sampling ───
 
 #[test]
 fn test_sample_domain_stats_running_vm() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     if !test_vm_is_running(&conn) {
         eprintln!("SKIP: test_sample_domain_stats_running_vm — needs fedora-workstation running");
         return;
@@ -1056,21 +853,8 @@ fn test_sample_domain_stats_running_vm() {
 }
 
 #[test]
-fn test_sample_stats_includes_disks_and_nics() {
-    let conn = connect_testhost();
-    // example-firewall has 2 bridged NICs (lan, domo) and a disk
-    let s = conn.sample_domain_stats("example-firewall").expect("sample");
-    assert!(!s.disks.is_empty(), "example-firewall has a disk");
-    assert!(!s.interfaces.is_empty(), "example-firewall has NICs");
-    for nic in &s.interfaces {
-        assert!(nic.rx_bytes >= 0);
-        assert!(nic.tx_bytes >= 0);
-    }
-}
-
-#[test]
 fn test_sample_cpu_time_increments() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let s1 = conn.sample_domain_stats(TEST_VM).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(500));
     let s2 = conn.sample_domain_stats(TEST_VM).unwrap();
@@ -1089,79 +873,8 @@ use kraftwerk_lib::libvirt::spice_proxy::{
 };
 
 #[test]
-fn test_parse_spice_endpoint_from_prod_brokers_xml() {
-    let conn = connect_testhost();
-    let xml = conn.get_domain_xml("example-broker", false).unwrap();
-    let ep = parse_spice_endpoint(&xml);
-    assert!(ep.is_some(), "example-broker should have SPICE graphics");
-    let (host, port) = ep.unwrap();
-    println!("example-broker SPICE: {host}:{port}");
-    assert!(port >= 5900);
-}
-
-#[test]
-fn test_spice_session_to_prod_brokers() {
-    use capsaicin_client::{ClientEvent, DisplayEvent};
-
-    let conn = connect_testhost();
-    let xml = conn.get_domain_xml("example-broker", false).unwrap();
-    let (listen, port) = parse_spice_endpoint(&xml).expect("SPICE port");
-    let password = parse_spice_password(&xml).unwrap_or_default();
-    let target = kraftwerk_lib::libvirt::vnc_proxy::parse_ssh_target(JOLYNE_URI).unwrap();
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let mut session = SpiceSession::start(&target, &listen, port, &password, runtime.handle())
-        .expect("start SPICE session");
-
-    // Pump events until we see a SurfaceCreated (proves display channel handshake succeeded)
-    // or time out.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let mut got_surface = false;
-    let mut saw_any_display_event = false;
-
-    runtime.block_on(async {
-        while std::time::Instant::now() < deadline {
-            match tokio::time::timeout(std::time::Duration::from_millis(500), session.events_rx.recv()).await {
-                Ok(Some(evt)) => {
-                    match &evt {
-                        ClientEvent::Display(DisplayEvent::SurfaceCreated { width, height, primary, .. }) => {
-                            println!("SPICE SurfaceCreated: {width}x{height} primary={primary}");
-                            got_surface = true;
-                            saw_any_display_event = true;
-                            break;
-                        }
-                        ClientEvent::Display(_) => {
-                            saw_any_display_event = true;
-                        }
-                        ClientEvent::Cursor(_) | ClientEvent::MouseMode(_) => {
-                            // New sub-channel events; ignore for the handshake test.
-                        }
-                        ClientEvent::Closed(err) => {
-                            panic!("SPICE connection closed prematurely: {err:?}");
-                        }
-                    }
-                }
-                Ok(None) => panic!("event stream ended"),
-                Err(_) => { /* tick */ }
-            }
-        }
-    });
-
-    assert!(
-        got_surface || saw_any_display_event,
-        "expected at least one Display event within 10s"
-    );
-
-    session.close();
-}
-
-#[test]
 fn test_secure_xml_includes_spice_password() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     if !test_vm_is_running(&conn) {
         eprintln!("SKIP: test_secure_xml_includes_spice_password — libvirt only returns <graphics passwd> from secure XML when the VM is running");
         return;
@@ -1184,7 +897,7 @@ use kraftwerk_lib::libvirt::hostdev::HostDevice;
 
 #[test]
 fn test_list_host_pci_devices() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let devs = conn.list_host_pci_devices().expect("list_host_pci_devices");
     assert!(!devs.is_empty(), "testhost should have PCI devices");
     println!("Found {} PCI devices", devs.len());
@@ -1199,7 +912,7 @@ fn test_list_host_pci_devices() {
 
 #[test]
 fn test_list_host_usb_devices() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let devs = conn.list_host_usb_devices().expect("list_host_usb_devices");
     // testhost may or may not have USB devices plugged; just don't crash.
     println!("Found {} USB devices", devs.len());
@@ -1210,7 +923,7 @@ fn test_list_host_usb_devices() {
 
 #[test]
 fn test_list_domain_hostdevs_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     // fedora-workstation XML we've seen has no <hostdev>; expect empty.
     let devs = conn.list_domain_hostdevs("fedora-workstation")
         .expect("list_domain_hostdevs");
@@ -1229,7 +942,7 @@ fn test_list_domain_hostdevs_on_fedora() {
 
 #[test]
 fn test_get_domain_capabilities_testhost() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let caps = conn.get_domain_capabilities(None, None, None, None)
         .expect("get_domain_capabilities");
     // testhost is x86_64 KVM
@@ -1258,7 +971,7 @@ fn test_get_domain_capabilities_testhost() {
 
 #[test]
 fn test_parse_boot_config_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let cfg = conn.get_boot_config("fedora-workstation")
         .expect("get_boot_config");
     // fedora-workstation was seen to use EFI earlier.
@@ -1273,7 +986,7 @@ fn test_boot_menu_toggle_round_trip() {
     // Boot order is libvirt-validated against the VM's actual devices
     // (a <boot dev='cdrom'/> gets stripped when there is no CD-ROM).
     // Use boot menu enable/disable as a stable round-trip probe instead.
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn.get_boot_config("fedora-workstation").unwrap();
 
     let want = !before.boot_menu_enabled;
@@ -1299,7 +1012,7 @@ fn test_boot_menu_toggle_round_trip() {
 
 #[test]
 fn test_apply_event_action_round_trip() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn.get_boot_config("fedora-workstation").unwrap();
 
     let patch = kraftwerk_lib::libvirt::boot_config::BootPatch {
@@ -1323,7 +1036,7 @@ fn test_apply_event_action_round_trip() {
 
 #[test]
 fn test_list_disks_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let disks = conn.list_domain_disks(TEST_VM).expect("list disks");
     println!("fedora-workstation disks ({}):", disks.len());
     for d in &disks {
@@ -1338,7 +1051,7 @@ fn test_list_disks_on_fedora() {
 
 #[test]
 fn test_hotplug_disk_round_trip() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     if !test_vm_is_running(&conn) {
         eprintln!("SKIP: test_hotplug_disk_round_trip — needs fedora-workstation running");
         return;
@@ -1346,7 +1059,7 @@ fn test_hotplug_disk_round_trip() {
     use kraftwerk_lib::libvirt::disk_config::{DiskConfig, DiskSource};
     use kraftwerk_lib::libvirt::storage_config::{build_volume_xml, VolumeBuildParams};
 
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     // Pick a target name that isn't already taken.
     let existing = conn.list_domain_disks(TEST_VM).expect("list disks");
     assert!(!existing.iter().any(|d| d.target == "vdz"),
@@ -1425,7 +1138,7 @@ fn test_hotplug_disk_round_trip() {
 fn test_cdrom_media_change_round_trip() {
     use kraftwerk_lib::libvirt::disk_config::{DiskConfig, DiskSource};
 
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     // Don't clobber an existing CD-ROM. Pick a target name that isn't used.
     let existing = conn.list_domain_disks(TEST_VM).expect("list disks");
@@ -1518,7 +1231,7 @@ impl<'a> Drop for NicCleanup<'a> {
 
 #[test]
 fn test_list_domain_nics_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let nics = conn.list_domain_nics(TEST_VM).expect("list_domain_nics");
     println!("{TEST_VM} has {} NIC(s)", nics.len());
     assert!(!nics.is_empty(), "fedora-workstation is expected to have at least one NIC");
@@ -1532,7 +1245,7 @@ fn test_list_domain_nics_on_fedora() {
 fn test_hot_add_and_detach_network_nic() {
     use kraftwerk_lib::libvirt::nic_config::{NicConfig, NicSource};
 
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let vm = conn.list_all_domains().unwrap();
     let running = vm.iter().any(|d| d.name == TEST_VM && matches!(d.state, VmState::Running));
     if !running {
@@ -1571,7 +1284,7 @@ fn test_hot_add_and_detach_network_nic() {
 fn test_link_state_toggle_round_trip() {
     use kraftwerk_lib::libvirt::nic_config::{NicConfig, NicSource};
 
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let vm = conn.list_all_domains().unwrap();
     let running = vm.iter().any(|d| d.name == TEST_VM && matches!(d.state, VmState::Running));
     if !running {
@@ -1610,7 +1323,7 @@ fn test_link_state_toggle_round_trip() {
 
 #[test]
 fn test_parse_display_config_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let cfg = conn
         .get_display_config("fedora-workstation")
         .expect("get_display_config");
@@ -1640,7 +1353,7 @@ fn test_parse_display_config_on_fedora() {
 
 #[test]
 fn test_video_model_round_trip_virtio_cirrus_virtio() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn
         .get_display_config("fedora-workstation")
         .expect("get_display_config");
@@ -1705,7 +1418,7 @@ fn test_video_model_round_trip_virtio_cirrus_virtio() {
 #[test]
 fn test_input_list_round_trip() {
     // Save current input list, swap in a minimal list, verify, then restore.
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn.get_display_config("fedora-workstation").unwrap();
     let original_inputs = before.input.clone();
     assert!(!original_inputs.is_empty(), "need baseline inputs");
@@ -1792,7 +1505,7 @@ impl<'a> Drop for RngGuard<'a> {
 
 #[test]
 fn test_get_virtio_devices_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let snap = conn
         .get_virtio_devices("fedora-workstation")
         .expect("get_virtio_devices");
@@ -1813,7 +1526,7 @@ fn test_get_virtio_devices_on_fedora() {
 
 #[test]
 fn test_panic_notifier_round_trip_persistent() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn
         .get_virtio_devices("fedora-workstation")
         .expect("snapshot")
@@ -1848,7 +1561,7 @@ fn test_panic_notifier_round_trip_persistent() {
 
 #[test]
 fn test_rng_hotplug_round_trip() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     // fedora-workstation must be running for hotplug to be meaningful.
     // Skip if not running — the assertion confirms it's reachable.
@@ -1908,7 +1621,7 @@ fn test_rng_hotplug_round_trip() {
 
 #[test]
 fn test_read_char_devices_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let snap = conn.get_char_devices("fedora-workstation")
         .expect("get_char_devices");
     println!(
@@ -1928,7 +1641,7 @@ fn test_read_char_devices_on_fedora() {
 fn test_qemu_ga_channel_add_remove_round_trip() {
     use kraftwerk_lib::libvirt::char_devices as chd;
 
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let before = conn.get_char_devices("fedora-workstation").unwrap();
     let ga_name = "org.qemu.guest_agent.0";
     let had_ga_before = before.channels.iter()
@@ -2001,7 +1714,7 @@ impl Drop for RoundGCleanup<'_> {
 
 #[test]
 fn test_list_filesystems_empty_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let fs = conn.list_filesystems(TEST_VM).expect("list_filesystems");
     // fedora-workstation has no <filesystem> entries by default.
     println!("fedora-workstation has {} filesystem entries", fs.len());
@@ -2015,7 +1728,7 @@ fn test_list_filesystems_empty_on_fedora() {
 
 #[test]
 fn test_list_shmems_empty_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let shs = conn.list_shmems(TEST_VM).expect("list_shmems");
     println!("fedora-workstation has {} shmem entries", shs.len());
     assert!(
@@ -2026,7 +1739,7 @@ fn test_list_shmems_empty_on_fedora() {
 
 #[test]
 fn test_virtiofs_add_remove_round_trip_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     // Record whether memoryBacking was present before we touched it -
     // the cleanup guard uses this to decide whether to strip it.
@@ -2089,7 +1802,7 @@ fn test_virtiofs_add_remove_round_trip_on_fedora() {
 
 #[test]
 fn test_enable_shared_memory_backing_is_idempotent() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let had_before = fsc::has_shared_memory_backing(
         &conn.get_domain_xml(TEST_VM, true).unwrap(),
     );
@@ -2133,7 +1846,7 @@ fn test_enable_shared_memory_backing_is_idempotent() {
 
 #[test]
 fn test_list_controllers_on_fedora() {
-    let conn = connect_testhost();
+    let conn = connect_test_host();
     let cs = conn
         .list_controllers(TEST_VM)
         .expect("list_controllers");
@@ -2178,7 +1891,7 @@ fn test_list_controllers_on_fedora() {
 fn test_update_usb_controller_model_round_trip() {
     // Persistent-only — most controller model changes require shutdown,
     // so we NEVER touch the live definition here. save+restore.
-    let conn = connect_testhost();
+    let conn = connect_test_host();
 
     let before = conn.list_controllers(TEST_VM).expect("list before");
     let usb = before

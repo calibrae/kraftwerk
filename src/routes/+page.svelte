@@ -20,21 +20,9 @@
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
-  const DEV_CONNECTION = {
-    name: "testhost",
-    uri: "qemu+ssh://testuser@testhost/system",
-    authType: "ssh_agent",
-  };
-
   onMount(async () => {
     await loadConnections();
     startAutoPolls();
-    if (appState.savedConnections.length === 0) {
-      try {
-        const conn = await addConnection(DEV_CONNECTION.name, DEV_CONNECTION.uri, DEV_CONNECTION.authType);
-        await connect(conn.id);
-      } catch (_) {}
-    }
   });
 </script>
 
