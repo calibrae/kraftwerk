@@ -64,6 +64,17 @@ export async function addConnection(displayName, uri, authType) {
   }
 }
 
+export async function updateConnection(id, displayName, uri, authType) {
+  const updated = await invoke("update_connection", {
+    id,
+    displayName,
+    uri,
+    authType,
+  });
+  savedConnections = savedConnections.map(c => c.id === id ? updated : c);
+  return updated;
+}
+
 export async function removeConnection(id) {
   try {
     await invoke("remove_connection", { id });

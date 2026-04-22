@@ -20,6 +20,27 @@ pub fn add_connection(
     Ok(conn)
 }
 
+/// Update the mutable fields (display name, URI, auth type) of a
+/// saved connection. The UUID is preserved.
+#[tauri::command]
+pub fn update_connection(
+    state: State<'_, AppState>,
+    id: String,
+    display_name: String,
+    uri: String,
+    auth_type: AuthType,
+) -> Result<SavedConnection, VirtManagerError> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| VirtManagerError::ConnectionNotFound {
+        id: id.clone(),
+    })?;
+    if !state.update_saved_connection(&uuid, display_name, uri, auth_type) {
+        return Err(VirtManagerError::ConnectionNotFound { id });
+    }
+    state
+        .find_saved_connection(&uuid)
+        .ok_or(VirtManagerError::ConnectionNotFound { id: uuid.to_string() })
+}
+
 /// Remove a saved connection by ID.
 #[tauri::command]
 pub fn remove_connection(

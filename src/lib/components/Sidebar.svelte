@@ -1,7 +1,7 @@
 <script>
   import { getState, connect, disconnect, selectVm, removeConnection, refreshVms } from "$lib/stores/app.svelte.js";
 
-  let { onAddConnection } = $props();
+  let { onAddConnection = () => {}, onEditConnection = () => {} } = $props();
   const appState = getState();
 
   const stateColors = {
@@ -24,6 +24,25 @@
 
   function connectionStatus(id) {
     return appState.connectionStates[id]?.status ?? "disconnected";
+  }
+
+  // Right-click context menu state.
+  let menuFor = $state(null);       // connection id whose menu is open, or null
+  let menuX = $state(0);
+  let menuY = $state(0);
+
+  function openMenu(ev, conn) {
+    ev.preventDefault();
+    menuFor = conn.id;
+    menuX = ev.clientX;
+    menuY = ev.clientY;
+  }
+
+  function closeMenu() { menuFor = null; }
+
+  function editFromMenu(conn) {
+    closeMenu();
+    onEditConnection(conn);
   }
 
   async function handleConnect(id) {
@@ -57,6 +76,7 @@
             tabindex="0"
             onclick={() => handleConnect(conn.id)}
             onkeydown={(e) => (e.key === "Enter" || e.key === " ") && handleConnect(conn.id)}
+            oncontextmenu={(e) => openMenu(e, conn)}
           >
             <span class="status-dot" class:connected={status === "connected"} class:connecting={status === "connecting"} class:error={status === "error"}></span>
             <span class="connection-name">{conn.display_name}</span>
@@ -104,6 +124,18 @@
     </ul>
   {/if}
 </aside>
+
+{#if menuFor}
+  <!-- Backdrop catches click-outside to close -->
+  <div class="menu-backdrop" onclick={closeMenu} onkeydown={(e) => e.key === "Escape" && closeMenu()} role="presentation"></div>
+  <div class="ctx-menu" style="left: {menuX}px; top: {menuY}px;" role="menu">
+    {#each appState.savedConnections.filter(c => c.id === menuFor) as conn (conn.id)}
+      <button class="ctx-item" onclick={() => editFromMenu(conn)}>Edit / Properties</button>
+      <button class="ctx-item danger" onclick={() => { closeMenu(); removeConnection(conn.id); }}>Remove</button>
+    {/each}
+  </div>
+{/if}
+
 
 <style>
   .sidebar {
@@ -301,4 +333,35 @@
     font-size: 11px;
     color: #ef4444;
   }
+
+  .menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+  }
+  .ctx-menu {
+    position: fixed;
+    z-index: 201;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 160px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+  }
+  .ctx-item {
+    padding: 6px 12px;
+    background: transparent;
+    color: var(--text);
+    border: none;
+    text-align: left;
+    font-size: 13px;
+    font-family: inherit;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .ctx-item:hover { background: var(--bg-hover); }
+  .ctx-item.danger { color: #ef4444; }
 </style>

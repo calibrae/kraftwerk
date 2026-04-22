@@ -13,6 +13,7 @@
 
   const appState = getState();
   let showConnectionDialog = $state(false);
+  let editingConnection = $state(null);
   let showNetworkDialog = $state(false);
   let showPoolDialog = $state(false);
   let showVolumeDialog = $state(false);
@@ -27,7 +28,10 @@
 </script>
 
 <div class="app-layout">
-  <Sidebar onAddConnection={() => showConnectionDialog = true} />
+  <Sidebar
+    onAddConnection={() => { editingConnection = null; showConnectionDialog = true; }}
+    onEditConnection={(conn) => { editingConnection = conn; showConnectionDialog = true; }}
+  />
 
   <main class="main-area">
     {#if appState.isConnected}
@@ -60,7 +64,7 @@
   </main>
 </div>
 
-<ConnectionDialog bind:open={showConnectionDialog} />
+<ConnectionDialog bind:open={showConnectionDialog} bind:editing={editingConnection} />
 <CreateNetworkDialog bind:open={showNetworkDialog} />
 <CreatePoolDialog bind:open={showPoolDialog} />
 <CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />

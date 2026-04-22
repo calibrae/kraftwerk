@@ -1,13 +1,24 @@
 <script>
-  import { addConnection, connect } from "$lib/stores/app.svelte.js";
+  import { addConnection, connect, updateConnection } from "$lib/stores/app.svelte.js";
 
-  let { open = $bindable(false) } = $props();
+  // `editing` null = add mode; non-null SavedConnection = edit mode.
+  let { open = $bindable(false), editing = $bindable(null) } = $props();
 
   let displayName = $state("");
   let uri = $state("qemu+ssh:///system");
   let authType = $state("ssh_agent");
   let saving = $state(false);
   let err = $state(null);
+
+  // When `editing` becomes non-null (dialog opened for edit), prefill fields.
+  $effect(() => {
+    if (editing) {
+      displayName = editing.display_name;
+      uri = editing.uri;
+      authType = editing.auth_type;
+      err = null;
+    }
+  });
 
   function reset() {
     displayName = "";
@@ -19,6 +30,7 @@
 
   function close() {
     open = false;
+    editing = null;
     reset();
   }
 
@@ -29,9 +41,12 @@
     saving = true;
     err = null;
     try {
-      const conn = await addConnection(displayName.trim(), uri.trim(), authType);
-      // Auto-connect after adding
-      await connect(conn.id);
+      if (editing) {
+        await updateConnection(editing.id, displayName.trim(), uri.trim(), authType);
+      } else {
+        const conn = await addConnection(displayName.trim(), uri.trim(), authType);
+        await connect(conn.id);
+      }
       close();
     } catch (ex) {
       err = ex?.message || String(ex);
@@ -49,7 +64,7 @@
   <div class="backdrop" onclick={close} onkeydown={handleKeydown} role="dialog" aria-modal="true">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="dialog" onclick={(e) => e.stopPropagation()} onkeydown={handleKeydown}>
-      <h3>New Connection</h3>
+      <h3>{editing ? "Edit Connection" : "New Connection"}</h3>
 
       <form onsubmit={handleSubmit}>
         <label>
@@ -78,7 +93,7 @@
         <div class="actions">
           <button type="button" class="btn-cancel" onclick={close} disabled={saving}>Cancel</button>
           <button type="submit" class="btn-connect" disabled={saving || !displayName.trim() || !uri.trim()}>
-            {saving ? "Connecting..." : "Connect"}
+            {saving ? (editing ? "Saving..." : "Connecting...") : (editing ? "Save" : "Connect")}
           </button>
         </div>
       </form>

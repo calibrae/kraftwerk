@@ -118,6 +118,30 @@ impl AppState {
             .cloned()
     }
 
+    /// Update a saved connections mutable fields. Returns true if found.
+    pub fn update_saved_connection(
+        &self,
+        id: &Uuid,
+        display_name: String,
+        uri: String,
+        auth_type: crate::models::connection::AuthType,
+    ) -> bool {
+        let mut changed = false;
+        {
+            let mut guard = self.saved_connections.lock().unwrap();
+            if let Some(conn) = guard.iter_mut().find(|c| c.id == *id) {
+                conn.display_name = display_name;
+                conn.uri = uri;
+                conn.auth_type = auth_type;
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_connections();
+        }
+        changed
+    }
+
     pub fn update_last_connected(&self, id: &Uuid, timestamp: i64) {
         let mut changed = false;
         {

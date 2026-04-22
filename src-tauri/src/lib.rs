@@ -39,6 +39,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Connection management
             connection::add_connection,
+            connection::update_connection,
             connection::remove_connection,
             connection::list_saved_connections,
             connection::connect,
