@@ -1,6 +1,6 @@
 [package]
 name = "kraftwerk"
-version = "0.1.8"
+version = "0.1.9"
 description = "Cross-platform virtual machine manager using libvirt"
 authors = ["Nicolas Bousquet"]
 edition = "2021"
@@ -31,6 +31,7 @@ tokio-tungstenite = "0.27"
 futures-util = "0.3"
 capsaicin-client = { git = "https://github.com/calibrae/capsaicin.git", rev = "079eac7" }
 base64 = "0.22"
+dirs = "6.0.0"
 
 [dev-dependencies]
 mockall = "0.13"

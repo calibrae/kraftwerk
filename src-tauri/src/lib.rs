@@ -28,9 +28,14 @@ use commands::storage;
 pub fn run() {
     env_logger::init();
 
+    let config_path = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("kraftwerk")
+        .join("connections.json");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage(AppState::with_persistence(config_path))
         .invoke_handler(tauri::generate_handler![
             // Connection management
             connection::add_connection,

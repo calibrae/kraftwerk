@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -24,6 +26,8 @@ pub struct AppState {
     spice: Mutex<Option<SpiceSession>>,
     runtime: tokio::runtime::Runtime,
     current_uri: Mutex<Option<String>>,
+    /// When set, mutations to saved_connections are persisted to this file.
+    persistence_path: Option<PathBuf>,
 }
 
 impl AppState {
@@ -42,6 +46,42 @@ impl AppState {
                 .thread_name("virtmanager-net")
                 .build()
                 .expect("tokio runtime"),
+            persistence_path: None,
+        }
+    }
+
+    /// Build an AppState that persists saved_connections to \`path\`.
+    /// If the file exists it is loaded into memory at construction.
+    pub fn with_persistence(path: PathBuf) -> Self {
+        let mut state = Self::new();
+        if let Ok(bytes) = fs::read(&path) {
+            if let Ok(conns) = serde_json::from_slice::<Vec<SavedConnection>>(&bytes) {
+                *state.saved_connections.lock().unwrap() = conns;
+                log::info!("Loaded {} saved connections from {}", state.saved_connections.lock().unwrap().len(), path.display());
+            } else {
+                log::warn!("Could not deserialize saved connections from {}", path.display());
+            }
+        }
+        state.persistence_path = Some(path);
+        state
+    }
+
+    fn persist_connections(&self) {
+        let Some(path) = self.persistence_path.as_ref() else { return };
+        if let Some(parent) = path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                log::warn!("Could not create parent dir for {}: {}", path.display(), e);
+                return;
+            }
+        }
+        let conns = self.saved_connections.lock().unwrap().clone();
+        match serde_json::to_vec_pretty(&conns) {
+            Ok(bytes) => {
+                if let Err(e) = fs::write(path, bytes) {
+                    log::warn!("Could not write saved connections to {}: {}", path.display(), e);
+                }
+            }
+            Err(e) => log::warn!("Could not serialize saved connections: {}", e),
         }
     }
 
@@ -53,6 +93,7 @@ impl AppState {
 
     pub fn add_saved_connection(&self, conn: SavedConnection) {
         self.saved_connections.lock().unwrap().push(conn);
+        self.persist_connections();
     }
 
     pub fn remove_saved_connection(&self, id: &Uuid) {
@@ -61,6 +102,7 @@ impl AppState {
             .unwrap()
             .retain(|c| c.id != *id);
         self.connection_states.lock().unwrap().remove(id);
+        self.persist_connections();
     }
 
     pub fn get_saved_connections(&self) -> Vec<SavedConnection> {
@@ -77,14 +119,16 @@ impl AppState {
     }
 
     pub fn update_last_connected(&self, id: &Uuid, timestamp: i64) {
-        if let Some(conn) = self
-            .saved_connections
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|c| c.id == *id)
+        let mut changed = false;
         {
-            conn.last_connected = Some(timestamp);
+            let mut guard = self.saved_connections.lock().unwrap();
+            if let Some(conn) = guard.iter_mut().find(|c| c.id == *id) {
+                conn.last_connected = Some(timestamp);
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_connections();
         }
     }
 
@@ -298,5 +342,39 @@ mod tests {
         let state = AppState::new();
         let result = state.console_send(b"hello");
         assert!(result.is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use crate::models::connection::AuthType;
+
+    #[test]
+    fn round_trips_connections_across_new_instance() {
+        let tmp = std::env::temp_dir().join(format!("kraftwerk-test-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+
+        let s1 = AppState::with_persistence(tmp.clone());
+        let a = SavedConnection::new("h1".into(), "qemu:///system".into(), AuthType::SshAgent);
+        let b = SavedConnection::new("h2".into(), "qemu:///system".into(), AuthType::Password);
+        s1.add_saved_connection(a.clone());
+        s1.add_saved_connection(b.clone());
+        drop(s1);
+
+        let s2 = AppState::with_persistence(tmp.clone());
+        let loaded = s2.get_saved_connections();
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|c| c.id == a.id));
+        assert!(loaded.iter().any(|c| c.id == b.id));
+
+        s2.remove_saved_connection(&a.id);
+        drop(s2);
+
+        let s3 = AppState::with_persistence(tmp.clone());
+        assert_eq!(s3.get_saved_connections().len(), 1);
+
+        let _ = std::fs::remove_file(&tmp);
     }
 }

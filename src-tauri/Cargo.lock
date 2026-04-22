@@ -2166,10 +2166,11 @@ dependencies = [
 
 [[package]]
 name = "kraftwerk"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "capsaicin-client",
+ "dirs",
  "env_logger",
  "futures-util",
  "keyring",
