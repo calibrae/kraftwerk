@@ -97,6 +97,7 @@ export async function connect(id) {
     selectedConnectionId = id;
     const domainList = await invoke("connect", { id });
     connectionStates = { ...connectionStates, [id]: { status: "connected" } };
+    pollFailures.delete(id);
     vms = domainList;
     selectedVmName = null;
     // Load networks in parallel
@@ -114,6 +115,7 @@ export async function disconnect(id) {
   try {
     await invoke("disconnect", { id });
     connectionStates = { ...connectionStates, [id]: { status: "disconnected" } };
+    pollFailures.delete(id);
     if (selectedConnectionId === id) {
       vms = [];
       networks = [];
@@ -321,6 +323,9 @@ export async function resizeVolume(poolName, path, capacityBytes) {
 let vmPollTimer = null;
 let slowPollTimer = null;
 let inFlight = false;
+// Consecutive failed polls per connection id. Flip to "error" at threshold.
+const pollFailures = new Map();
+const POLL_FAILURE_THRESHOLD = 3;
 
 export function startAutoPolls() {
   stopAutoPolls();
@@ -328,15 +333,23 @@ export function startAutoPolls() {
     if (inFlight || !selectedConnectionId) return;
     if (connectionStates[selectedConnectionId]?.status !== "connected") return;
     inFlight = true;
+    const id = selectedConnectionId;
     try {
       const fresh = await invoke("list_domains");
-      // Only assign if something actually changed, so we don't trigger
-      // unnecessary reactive updates.
+      pollFailures.set(id, 0);
       if (JSON.stringify(fresh) !== JSON.stringify(vms)) {
         vms = fresh;
       }
-    } catch (_) {
-      // ignore transient errors; next tick will retry
+    } catch (e) {
+      const n = (pollFailures.get(id) ?? 0) + 1;
+      pollFailures.set(id, n);
+      if (n >= POLL_FAILURE_THRESHOLD) {
+        connectionStates = {
+          ...connectionStates,
+          [id]: { status: "error", message: `Connection lost: ${e?.message || String(e)}` },
+        };
+        pollFailures.delete(id);
+      }
     } finally {
       inFlight = false;
     }
