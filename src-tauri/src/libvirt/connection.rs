@@ -36,14 +36,21 @@ impl LibvirtConnection {
     /// hypervisor wedges the caller for ~2 minutes on the system TCP
     /// timeout, which freezes the Tauri IPC worker.
     pub fn open(&self, uri: &str) -> Result<(), VirtManagerError> {
-        if let Some((host, port)) = parse_ssh_host_port(uri) {
-            let addr = (host.as_str(), port)
-                .to_socket_addrs()
-                .map_err(|e| VirtManagerError::Timeout { host: format!("{host}: {e}") })?
-                .next()
-                .ok_or_else(|| VirtManagerError::Timeout { host: host.clone() })?;
-            TcpStream::connect_timeout(&addr, Duration::from_secs(5))
-                .map_err(|_| VirtManagerError::Timeout { host: format!("{host}:{port}") })?;
+        // Preflight can be disabled by setting KRAFTWERK_SKIP_PREFLIGHT=1
+        // (used by integration tests, which tolerate the longer libvirt-side
+        // timeout and may run in sandboxed contexts where raw TCP probes
+        // behave differently from libvirt's ssh-spawned child).
+        let skip = std::env::var("KRAFTWERK_SKIP_PREFLIGHT").ok().filter(|v| !v.is_empty()).is_some();
+        if !skip {
+            if let Some((host, port)) = parse_ssh_host_port(uri) {
+                let addr = (host.as_str(), port)
+                    .to_socket_addrs()
+                    .map_err(|e| VirtManagerError::Timeout { host: format!("{host}: {e}") })?
+                    .next()
+                    .ok_or_else(|| VirtManagerError::Timeout { host: host.clone() })?;
+                TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+                    .map_err(|_| VirtManagerError::Timeout { host: format!("{host}:{port}") })?;
+            }
         }
         let conn = Connect::open(Some(uri)).map_err(|e| VirtManagerError::ConnectionFailed {
             host: redact_uri(uri),
