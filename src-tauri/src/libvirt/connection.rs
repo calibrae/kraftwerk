@@ -1229,6 +1229,31 @@ impl LibvirtConnection {
         })
     }
 
+    /// Set the **maximum (boot-time) vCPU count** of a domain.
+    ///
+    /// libvirt requires this for the persistent config only; raising max
+    /// vCPUs generally requires the VM to be shut off for the change to
+    /// take effect on next boot.
+    ///
+    /// VIR_DOMAIN_VCPU_MAXIMUM = 4, VIR_DOMAIN_AFFECT_CONFIG = 2.
+    pub fn set_max_vcpus(
+        &self,
+        name: &str,
+        count: u32,
+    ) -> Result<(), VirtManagerError> {
+        let flags: u32 = 4 | 2; // VCPU_MAXIMUM | AFFECT_CONFIG
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .set_vcpus_flags(count, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "setMaxVcpus".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
     /// Set memory for a domain in KiB. `live` affects running VM, `config` persists.
     pub fn set_memory(
         &self,

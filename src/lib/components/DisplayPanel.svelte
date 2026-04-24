@@ -89,6 +89,14 @@
 
   async function save() {
     if (!edit) return;
+    const oldType = cfg?.graphics?.[0]?.type;
+    const newType = edit?.graphics?.[0]?.type;
+    if (oldType && newType && oldType !== newType) {
+      const ok = confirm(
+        "Changing graphics type only takes effect after a VM shutdown + start. Your current console connection will not switch automatically."
+      );
+      if (!ok) return;
+    }
     busy = true; err = null;
     // Compute per-subsection patch: only send the subsection if it differs.
     const diff = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
@@ -180,6 +188,13 @@
           <span>Keymap</span>
           <input bind:value={edit.graphics[0].keymap} disabled={busy} placeholder="en-us" />
         </label>
+        {#if edit.graphics[0].type === "spice" || edit.graphics[0].type === "vnc"}
+          <label>
+            <span>Password</span>
+            <input type="text" bind:value={edit.graphics[0].passwd} disabled={busy} placeholder="(none)" />
+            <small class="hint">Password applies to new connections. Already-connected clients keep their session.</small>
+          </label>
+        {/if}
         {#if edit.graphics[0].type === "spice"}
           <label>
             <span>Default mode</span>
@@ -352,4 +367,5 @@
   .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .saved-note { color: #34d399; font-size: 12px; margin-left: 8px; }
+  .hint { margin-top: 4px; font-size: 11px; color: var(--text-muted); }
 </style>

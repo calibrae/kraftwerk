@@ -12,6 +12,7 @@
 
   // Edit state
   let editVcpus = $state(0);
+  let editMaxVcpus = $state(0);
   let editMemoryMb = $state(0);        // current (balloon target)
   let editMaxMemoryMb = $state(0);     // max (boot-time memory)
 
@@ -22,6 +23,7 @@
     try {
       config = await invoke("get_domain_config", { name: vmName, inactive: false });
       editVcpus = config.vcpus.current;
+      editMaxVcpus = config.vcpus.max;
       editMemoryMb = Math.floor(config.current_memory.kib / 1024);
       editMaxMemoryMb = Math.floor(config.memory.kib / 1024);
     } catch (e) {
@@ -41,12 +43,18 @@
     error = null;
     try {
       const running = appState.selectedVm?.state === "running";
-      await invoke("set_vcpus", {
-        name: vmName,
-        count: editVcpus,
-        live: running,
-        config: true,
-      });
+      const targetMax = Math.max(editMaxVcpus, editVcpus);
+      if (targetMax !== config.vcpus.max) {
+        await invoke("set_max_vcpus_count", { name: vmName, count: targetMax });
+      }
+      if (editVcpus !== config.vcpus.current) {
+        await invoke("set_vcpus", {
+          name: vmName,
+          count: editVcpus,
+          live: running,
+          config: true,
+        });
+      }
       await load();
       await refreshVms();
     } catch (e) {
@@ -127,13 +135,21 @@
 
       <div class="edit-row">
         <label>
-          <span>Active vCPUs</span>
-          <input type="number" min="1" max={config.vcpus.max} bind:value={editVcpus} disabled={busy} />
+          <span>Current vCPUs</span>
+          <input type="number" min="1" bind:value={editVcpus} disabled={busy} />
         </label>
-        <button class="btn-apply" onclick={applyVcpus} disabled={busy || editVcpus === config.vcpus.current || editVcpus < 1 || editVcpus > config.vcpus.max}>
+        <label>
+          <span>Max vCPUs</span>
+          <input type="number" min="1" bind:value={editMaxVcpus} disabled={busy} />
+        </label>
+        <button class="btn-apply" onclick={applyVcpus} disabled={busy || (editVcpus === config.vcpus.current && editMaxVcpus === config.vcpus.max) || editVcpus < 1}>
           {busy ? "Applying..." : "Apply"}
         </button>
       </div>
+      <p class="hint">Current must be &le; Max. Max changes only take effect on next boot.</p>
+      {#if appState.selectedVm?.state === "running" && editMaxVcpus !== config.vcpus.max}
+        <p class="hint warn">Max vCPU change only takes effect after shutdown + start.</p>
+      {/if}
     </section>
 
     <section>
@@ -157,6 +173,9 @@
         </button>
       </div>
       <p class="hint">Current must be &le; Max. If Current exceeds Max the Max is bumped automatically. Max changes only take effect on next boot.</p>
+      {#if appState.selectedVm?.state === "running" && editMaxMemoryMb * 1024 !== config.memory.kib}
+        <p class="hint warn">Max memory change only takes effect after shutdown + start.</p>
+      {/if}
     </section>
 
     <section>
@@ -275,6 +294,10 @@
     margin: 8px 0 0;
     font-size: 11px;
     color: var(--text-muted);
+  }
+
+  .hint.warn {
+    color: #fbbf24;
   }
 
   .error {

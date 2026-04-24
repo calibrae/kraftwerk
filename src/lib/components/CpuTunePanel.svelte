@@ -199,7 +199,7 @@
 
     <!-- ── CPU section ── -->
     <section>
-      <h3>CPU</h3>
+      <h3>CPU <span class="badge">restart required</span></h3>
       <div class="grid">
         <label>
           <span>Mode</span>
@@ -417,7 +417,7 @@
 
     <!-- ── Hugepages ── -->
     <section>
-      <h3>Hugepages <span class="badge">requires host reservation</span></h3>
+      <h3>Hugepages <span class="badge">restart required</span> <span class="badge">requires host reservation</span></h3>
       <button class="btn-tiny" onclick={addPage} disabled={busy}>+ add page</button>
       {#each edit.hugepages.pages as p, i}
         <div class="row">

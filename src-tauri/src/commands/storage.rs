@@ -72,6 +72,20 @@ pub fn refresh_pool(state: State<'_, AppState>, name: String) -> Result<(), Virt
 
 #[tauri::command]
 pub fn delete_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
+    // Guard: refuse if the pool still has volumes. libvirt rejects this
+    // with an opaque error; we wrap it with a clearer one.
+    if let Ok(vols) = state.libvirt().list_volumes(&name) {
+        if !vols.is_empty() {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "deletePool".into(),
+                reason: format!(
+                    "Pool {} has {} volumes; delete them first.",
+                    name,
+                    vols.len()
+                ),
+            });
+        }
+    }
     state.libvirt().delete_pool(&name)
 }
 
@@ -130,6 +144,34 @@ pub fn create_volume(
 
 #[tauri::command]
 pub fn delete_volume(state: State<'_, AppState>, path: String) -> Result<(), VirtManagerError> {
+    // Guard: refuse if any domain currently references this volume path.
+    let domains = state.libvirt().list_all_domains()?;
+    let mut in_use_by: Vec<String> = Vec::new();
+    let needle_file_sq = format!("file='{}'", path);
+    let needle_file_dq = format!("file=\"{}\"", path);
+    let needle_dev_sq = format!("dev='{}'", path);
+    let needle_dev_dq = format!("dev=\"{}\"", path);
+    for d in &domains {
+        let xml = match state.libvirt().get_domain_xml(&d.name, true) {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
+        if xml.contains(&needle_file_sq) || xml.contains(&needle_file_dq)
+            || xml.contains(&needle_dev_sq) || xml.contains(&needle_dev_dq)
+        {
+            in_use_by.push(d.name.clone());
+        }
+    }
+    if !in_use_by.is_empty() {
+        return Err(VirtManagerError::OperationFailed {
+            operation: "deleteVolume".into(),
+            reason: format!(
+                "Volume {} is in use by domain(s): {}. Detach it from those VMs first.",
+                path,
+                in_use_by.join(", ")
+            ),
+        });
+    }
     state.libvirt().delete_volume(&path)
 }
 

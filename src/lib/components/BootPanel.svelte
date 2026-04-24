@@ -49,6 +49,12 @@
 
   async function save() {
     if (!edit) return;
+    if (edit.machine !== cfg.machine && cfg.machine) {
+      const ok = confirm(
+        "Changing machine type reassigns PCI slot numbers. All virtio/USB device aliases will re-enumerate in the guest. Continue?"
+      );
+      if (!ok) { edit.machine = cfg.machine; return; }
+    }
     if (edit.firmware !== cfg.firmware) {
       const confirmed = confirm(
         "WARNING: switching firmware between BIOS and EFI on an existing VM\n" +
@@ -132,31 +138,41 @@
     {/if}
 
     <section>
-      <h3>Firmware</h3>
+      <h3>Machine</h3>
       <div class="grid">
-        <label>
-          <span>Firmware</span>
-          <select bind:value={edit.firmware} disabled={busy}>
-            {#each firmwareOptions as f}<option value={f}>{f.toUpperCase()}</option>{/each}
-          </select>
-          {#if cfg && edit.firmware !== cfg.firmware}
-            <small class="hint warn">
-              Changing firmware breaks an installed VM. Only do this on a fresh
-              install or one you are about to wipe.
-            </small>
-          {/if}
-        </label>
-        {#if edit.firmware === "efi"}
-          <label class="toggle">
-            <input type="checkbox" bind:checked={edit.secure_boot} disabled={busy} />
-            <span>Secure Boot</span>
-          </label>
-        {/if}
         <label>
           <span>Machine Type</span>
           <input bind:value={edit.machine} disabled={busy} placeholder="q35" />
+          {#if cfg && edit.machine !== cfg.machine}
+            <small class="hint warn">
+              Changing machine type re-enumerates PCI slots and device aliases in the guest.
+            </small>
+          {/if}
         </label>
       </div>
+      <details class="advanced">
+        <summary>Advanced: firmware (rarely change)</summary>
+        <div class="grid" style="margin-top: 10px;">
+          <label>
+            <span>Firmware</span>
+            <select bind:value={edit.firmware} disabled={busy}>
+              {#each firmwareOptions as f}<option value={f}>{f.toUpperCase()}</option>{/each}
+            </select>
+            {#if cfg && edit.firmware !== cfg.firmware}
+              <small class="hint warn">
+                Changing firmware breaks an installed VM. Only do this on a fresh
+                install or one you are about to wipe.
+              </small>
+            {/if}
+          </label>
+          {#if edit.firmware === "efi"}
+            <label class="toggle">
+              <input type="checkbox" bind:checked={edit.secure_boot} disabled={busy} />
+              <span>Secure Boot</span>
+            </label>
+          {/if}
+        </div>
+      </details>
     </section>
 
     <section>
@@ -305,4 +321,6 @@
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .saved-note { color: #34d399; font-size: 12px; margin-left: 8px; }
   .hint.warn { color: #fbbf24; font-size: 11px; }
+  details.advanced { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+  details.advanced summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
 </style>

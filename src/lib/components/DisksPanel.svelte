@@ -211,6 +211,7 @@
 
   function openEdit(d) {
     editing = JSON.parse(JSON.stringify(d));
+    editing._origBus = d.bus;
     if (editing.cache == null) editing.cache = "default";
     if (editing.io == null) editing.io = "default";
     if (editing.discard == null) editing.discard = "default";
@@ -219,8 +220,14 @@
 
   async function submitEdit() {
     if (!editing) return;
+    if (editing._origBus && editing._origBus !== editing.bus) {
+      if (!confirm(`Changing disk bus from ${editing._origBus} to ${editing.bus} almost always prevents the guest from finding its root device on next boot. Only do this for uninstalled/wiped disks. Continue?`)) {
+        return;
+      }
+    }
     busy = true; err = null;
     const patched = { ...editing };
+    delete patched._origBus;
     if (patched.cache === "default") patched.cache = null;
     if (patched.io === "default") patched.io = null;
     if (patched.discard === "default") patched.discard = null;
@@ -244,6 +251,9 @@
   }
 
   async function detach(d) {
+    if (isBootDisk(d)) {
+      if (!confirm("Removing the boot disk will crash the VM immediately. Continue?")) return;
+    }
     if (!confirm(`Detach disk ${d.target}?`)) return;
     busy = true; err = null;
     try {
@@ -308,6 +318,17 @@
     if (!p || !target) return false;
     return !target.startsWith(p);
   }
+
+  // Heuristic: a disk is the boot disk if it has boot_order===1, OR if
+  // it's on a conventional boot target (vda/sda/hda/xvda) and no other
+  // disk has an explicit boot_order.
+  const BOOT_TARGETS = new Set(["vda", "sda", "hda", "xvda"]);
+  function isBootDisk(disk) {
+    if (disk.boot_order === 1) return true;
+    const anyExplicit = disks.some((d) => typeof d.boot_order === "number");
+    if (anyExplicit) return false;
+    return BOOT_TARGETS.has(disk.target);
+  }
 </script>
 
 <div class="panel">
@@ -340,7 +361,7 @@
       <tbody>
         {#each disks as d (d.target)}
           <tr>
-            <td><code>{d.target}</code></td>
+            <td><code>{d.target}</code>{#if isBootDisk(d)}<span class="boot-badge">BOOT</span>{/if}</td>
             <td>{d.bus}</td>
             <td>{d.device}</td>
             <td>{d.driver_type ?? "—"}</td>
@@ -490,6 +511,7 @@
   .panel-header { display: flex; justify-content: space-between; align-items: center; }
   h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .err { padding: 10px; background: #7f1d1d; color: #fca5a5; border-radius: 6px; font-size: 13px; }
+  .boot-badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 3px; font-size: 10px; background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); font-family: inherit; letter-spacing: 0.03em; vertical-align: middle; }
   .muted { color: var(--text-muted); font-size: 13px; }
   table.disks { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.disks th, table.disks td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }

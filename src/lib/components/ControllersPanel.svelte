@@ -12,6 +12,7 @@
   let { vmName } = $props();
 
   let controllers = $state([]);
+  let hostdevs = $state([]);
   let loading = $state(true);
   let busy = $state(false);
   let err = $state(null);
@@ -41,6 +42,9 @@
     loading = true; err = null;
     try {
       controllers = await invoke("list_controllers", { name: vmName });
+      try {
+        hostdevs = await invoke("list_domain_hostdevs", { name: vmName });
+      } catch { hostdevs = []; }
     } catch (e) {
       err = e?.message || JSON.stringify(e);
     } finally {
@@ -129,6 +133,21 @@
 
   async function save() {
     if (!editing) return;
+    if (
+      editing.mode === "edit" &&
+      t(editing.original) === "usb" &&
+      editing.original.model !== editing.cfg.model
+    ) {
+      const hasUsbPassthrough = hostdevs.some((h) =>
+        (h.hostdev_type ?? h.type) === "usb" || h.kind === "usb"
+      );
+      if (hasUsbPassthrough) {
+        const ok = confirm(
+          "Changing USB controller model while USB passthrough devices are attached can make them unresponsive to the guest. Continue?"
+        );
+        if (!ok) return;
+      }
+    }
     busy = true; err = null;
     try {
       const cfg = editing.cfg;

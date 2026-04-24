@@ -103,6 +103,18 @@ pub fn set_max_memory_mb(
     state.libvirt().set_max_memory(&name, memory_mb * 1024)
 }
 
+/// Set the **maximum (boot-time) vCPU count** for a VM.
+/// Only applies to the persistent config. Usually requires the VM to
+/// be shut off for the change to take effect on next boot.
+#[tauri::command]
+pub fn set_max_vcpus_count(
+    state: State<'_, AppState>,
+    name: String,
+    count: u32,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_max_vcpus(&name, count)
+}
+
 /// Remove a VM's persistent configuration. VM must be shut off.
 #[tauri::command]
 pub fn undefine_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {

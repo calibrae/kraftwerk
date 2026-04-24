@@ -328,7 +328,10 @@
         </select>
 
         <label>MAC (optional)</label>
-        <input bind:value={editing.mac} placeholder="auto-generated if blank" />
+        <div>
+          <input bind:value={editing.mac} placeholder="auto-generated if blank" />
+          <div class="hint">Changing MAC will rename the interface in the guest next boot (eth0 &rarr; eth1). Static network config keyed by MAC will break.</div>
+        </div>
 
         <label>Target dev (optional)</label>
         <input bind:value={editing.target_dev} placeholder="vnetN (libvirt assigns)" />
@@ -475,4 +478,5 @@
   }
   .bw-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .hint { margin-top: 4px; font-size: 11px; color: #9ca3af; }
 </style>
