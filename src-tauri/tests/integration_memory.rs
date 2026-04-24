@@ -2,9 +2,9 @@
 //!
 //! Configure via env vars:
 //! - `KRAFTWERK_RAM_TEST_URI` — libvirt URI of a hypervisor with disposable
-//!   shut-off VMs to mutate (e.g. `qemu+ssh://user@polnareff/system`).
-//! - `KRAFTWERK_RAM_TEST_VM_A` (default: `wg-test-a`) and
-//!   `KRAFTWERK_RAM_TEST_VM_B` (default: `wg-test-b`) — names of the two
+//!   shut-off VMs to mutate (e.g. `qemu+ssh://user@ramhost/system`).
+//! - `KRAFTWERK_RAM_TEST_VM_A` (default: `vmtest-a`) and
+//!   `KRAFTWERK_RAM_TEST_VM_B` (default: `vmtest-b`) — names of the two
 //!   test VMs. Both must be shut off; max-memory edits require shutdown.
 //!
 //! Tests skip gracefully when the env var is unset or the VMs aren't
@@ -21,11 +21,11 @@ fn ram_test_uri() -> Option<String> {
 }
 
 fn vm_a() -> String {
-    env::var("KRAFTWERK_RAM_TEST_VM_A").unwrap_or_else(|_| "wg-test-a".into())
+    env::var("KRAFTWERK_RAM_TEST_VM_A").unwrap_or_else(|_| "vmtest-a".into())
 }
 
 fn vm_b() -> String {
-    env::var("KRAFTWERK_RAM_TEST_VM_B").unwrap_or_else(|_| "wg-test-b".into())
+    env::var("KRAFTWERK_RAM_TEST_VM_B").unwrap_or_else(|_| "vmtest-b".into())
 }
 
 fn connect_ram_host() -> Option<LibvirtConnection> {
@@ -99,7 +99,7 @@ fn test_set_current_memory_below_max_on_wg_test_b() {
     let _guard = MemGuard::new(&conn, &vm);
 
     let orig = conn.get_domain_config(&vm, true).unwrap();
-    // Drop current to half the max (rounded to 1 KiB multiple; wg-test-b
+    // Drop current to half the max (rounded to 1 KiB multiple; vmtest-b
     // starts at 512 MiB = 524288 KiB, half is 262144).
     let target_cur_kib = orig.memory.kib / 2;
 

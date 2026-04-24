@@ -91,7 +91,7 @@ jobs:
         working-directory: src-tauri
         env:
           # Separate URI: a hypervisor with shut-off disposable VMs
-          # (wg-test-a / wg-test-b) used exclusively for max-memory edits.
+          # (vmtest-a / vmtest-b) used exclusively for max-memory edits.
           KRAFTWERK_RAM_TEST_URI: ${{ secrets.KRAFTWERK_RAM_TEST_URI }}
           KRAFTWERK_SKIP_PREFLIGHT: "1"
         run: cargo test --test integration_memory -- --test-threads=1

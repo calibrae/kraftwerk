@@ -126,7 +126,7 @@ curl -s -H "X-Vault-Token: $VAULT_TOKEN" http://10.10.0.3:8200/v1/secret/data/in
 
 ### Hypervisor connections
 Kraftwerk manages VMs on:
-- **polnareff** (10.10.0.7) — KVM/libvirt, 9 VMs, Terraform-managed
+- **ramhost** — secondary hypervisor (address via the KRAFTWERK_RAM_TEST_URI secret)
 - **testhost** (192.0.2.1) — KVM/libvirt, manual VMs (HASS, brokers, UniFi, OPNsense)
 - **doppio** (10.10.0.12) — KVM/libvirt, Fedora 43, GPU passthrough (mira Windows VM)
 
