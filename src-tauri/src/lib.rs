@@ -58,6 +58,7 @@ pub fn run() {
             domain::get_domain_stats,
             domain::set_vcpus,
             domain::set_memory_mb,
+            domain::set_max_memory_mb,
             // Console
             console::open_console,
             console::console_send,

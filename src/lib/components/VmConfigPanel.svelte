@@ -12,7 +12,8 @@
 
   // Edit state
   let editVcpus = $state(0);
-  let editMemoryMb = $state(0);
+  let editMemoryMb = $state(0);        // current (balloon target)
+  let editMaxMemoryMb = $state(0);     // max (boot-time memory)
 
   async function load() {
     if (!vmName) return;
@@ -21,7 +22,8 @@
     try {
       config = await invoke("get_domain_config", { name: vmName, inactive: false });
       editVcpus = config.vcpus.current;
-      editMemoryMb = Math.floor(config.memory.kib / 1024);
+      editMemoryMb = Math.floor(config.current_memory.kib / 1024);
+      editMaxMemoryMb = Math.floor(config.memory.kib / 1024);
     } catch (e) {
       error = e?.message || String(e);
     } finally {
@@ -60,12 +62,22 @@
     error = null;
     try {
       const running = appState.selectedVm?.state === "running";
-      await invoke("set_memory_mb", {
-        name: vmName,
-        memoryMb: editMemoryMb,
-        live: running,
-        config: true,
-      });
+      const oldMaxMb = Math.floor(config.memory.kib / 1024);
+      // Either the user bumped the max explicitly, or set current above the
+      // old max (which would otherwise be rejected by libvirt). In both cases,
+      // push the max out first via config-only set_max_memory_mb.
+      const targetMaxMb = Math.max(editMaxMemoryMb, editMemoryMb);
+      if (targetMaxMb !== oldMaxMb) {
+        await invoke("set_max_memory_mb", { name: vmName, memoryMb: targetMaxMb });
+      }
+      if (editMemoryMb * 1024 !== config.current_memory.kib) {
+        await invoke("set_memory_mb", {
+          name: vmName,
+          memoryMb: editMemoryMb,
+          live: running,
+          config: true,
+        });
+      }
       await load();
       await refreshVms();
     } catch (e) {
@@ -133,14 +145,18 @@
 
       <div class="edit-row">
         <label>
-          <span>Memory (MiB)</span>
-          <input type="number" min="128" step="128" max={Math.floor(config.memory.kib / 1024)} bind:value={editMemoryMb} disabled={busy} />
+          <span>Current (MiB)</span>
+          <input type="number" min="128" step="128" bind:value={editMemoryMb} disabled={busy} />
         </label>
-        <button class="btn-apply" onclick={applyMemory} disabled={busy || editMemoryMb * 1024 === config.current_memory.kib}>
+        <label>
+          <span>Max (MiB)</span>
+          <input type="number" min="128" step="128" bind:value={editMaxMemoryMb} disabled={busy} />
+        </label>
+        <button class="btn-apply" onclick={applyMemory} disabled={busy || (editMemoryMb * 1024 === config.current_memory.kib && editMaxMemoryMb * 1024 === config.memory.kib)}>
           {busy ? "Applying..." : "Apply"}
         </button>
       </div>
-      <p class="hint">Cannot exceed maximum ({formatKib(config.memory.kib)}). Live-editing requires memory balloon support.</p>
+      <p class="hint">Current must be &le; Max. If Current exceeds Max the Max is bumped automatically. Max changes only take effect on next boot.</p>
     </section>
 
     <section>

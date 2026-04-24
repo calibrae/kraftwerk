@@ -82,7 +82,14 @@ jobs:
       - name: cargo test --test integration_testhost
         working-directory: src-tauri
         env:
-          # Self-hosted runner has ssh access; real URI is provided via
-          # a repo secret so the workflow file can stay generic.
+          # Self-hosted runner has ssh access; real URIs are provided via
+          # repo secrets so the workflow file can stay generic.
           KRAFTWERK_TEST_URI: ${{ secrets.KRAFTWERK_TEST_URI }}
         run: cargo test --test integration_testhost -- --test-threads=1
+      - name: cargo test --test integration_memory
+        working-directory: src-tauri
+        env:
+          # Separate URI: a hypervisor with shut-off disposable VMs
+          # (wg-test-a / wg-test-b) used exclusively for max-memory edits.
+          KRAFTWERK_RAM_TEST_URI: ${{ secrets.KRAFTWERK_RAM_TEST_URI }}
+        run: cargo test --test integration_memory -- --test-threads=1

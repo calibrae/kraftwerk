@@ -1202,6 +1202,33 @@ impl LibvirtConnection {
         })
     }
 
+    /// Set the **maximum (boot-time) memory** of a domain in KiB.
+    ///
+    /// libvirt requires this for the persistent config only; live runtime
+    /// max-memory increase requires pre-declared memory hotplug slots,
+    /// which we don't model yet, so we only touch the config domain here.
+    /// The VM typically needs to be shut off for the change to take effect
+    /// on next boot.
+    ///
+    /// VIR_DOMAIN_MEM_MAXIMUM = 4, VIR_DOMAIN_AFFECT_CONFIG = 2.
+    pub fn set_max_memory(
+        &self,
+        name: &str,
+        memory_kib: u64,
+    ) -> Result<(), VirtManagerError> {
+        let flags: u32 = 4 | 2; // MEM_MAXIMUM | AFFECT_CONFIG
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .set_memory_flags(memory_kib, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "setMaxMemory".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
     /// Set memory for a domain in KiB. `live` affects running VM, `config` persists.
     pub fn set_memory(
         &self,

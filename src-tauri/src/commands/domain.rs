@@ -91,6 +91,18 @@ pub fn set_memory_mb(
 }
 
 
+/// Set the **maximum (boot-time) memory** (in MiB) for a VM.
+/// Only applies to the persistent config. Usually requires the VM to
+/// be shut off for the change to take effect on next boot.
+#[tauri::command]
+pub fn set_max_memory_mb(
+    state: State<'_, AppState>,
+    name: String,
+    memory_mb: u64,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_max_memory(&name, memory_mb * 1024)
+}
+
 /// Remove a VM's persistent configuration. VM must be shut off.
 #[tauri::command]
 pub fn undefine_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
