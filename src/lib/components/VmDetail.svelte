@@ -1,6 +1,7 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
+  import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
@@ -104,13 +105,15 @@
       <SerialConsole vmName={appState.selectedVm.name} onClose={closeConsole} />
     {/key}
   {:else if !appState.selectedVm}
-    <div class="empty-detail">
-      {#if appState.isConnected}
-        <p>Select a VM from the sidebar</p>
-      {:else}
+    {#if appState.isConnected}
+      {#key appState.selectedConnectionId}
+        <HypervisorDashboard />
+      {/key}
+    {:else}
+      <div class="empty-detail">
         <p>Connect to a hypervisor to get started</p>
-      {/if}
-    </div>
+      </div>
+    {/if}
   {:else}
     {@const vm = appState.selectedVm}
     <div class="vm-header">

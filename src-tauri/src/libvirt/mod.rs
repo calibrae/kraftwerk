@@ -3,6 +3,7 @@ pub mod console;
 pub mod domain_config;
 pub mod domain_stats;
 pub mod hostdev;
+pub mod host_info;
 pub mod domain_caps;
 pub mod boot_config;
 pub mod disk_config;

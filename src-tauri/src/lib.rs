@@ -23,6 +23,7 @@ use commands::filesystem as cmd_filesystem;
 use commands::controllers as cmd_controllers;
 use commands::cpu_tune as cmd_cpu_tune;
 use commands::storage;
+use commands::host;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,6 +43,8 @@ pub fn run() {
             connection::update_connection,
             connection::remove_connection,
             connection::list_saved_connections,
+            host::get_host_info,
+            host::get_host_memory,
             connection::connect,
             connection::disconnect,
             connection::get_connection_state,

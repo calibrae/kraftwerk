@@ -88,6 +88,54 @@ impl LibvirtConnection {
         })
     }
 
+    /// Aggregate host info for the dashboard view.
+    pub fn get_host_info(&self) -> Result<crate::libvirt::host_info::HostInfo, crate::models::error::VirtManagerError> {
+        use crate::libvirt::host_info::{format_lib_version, HostInfo};
+        use crate::models::error::VirtManagerError;
+        self.with_connection(|conn| {
+            let hostname = conn.get_hostname().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getHostname".into(), reason: e.to_string(),
+            })?;
+            let info = conn.get_node_info().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getNodeInfo".into(), reason: e.to_string(),
+            })?;
+            let hypervisor_type = conn.get_type().unwrap_or_else(|_| "unknown".into());
+            let lib_v = conn.get_lib_version().unwrap_or(0);
+            Ok(HostInfo {
+                hostname,
+                hypervisor_type,
+                libvirt_version: format_lib_version(lib_v),
+                cpu_model: info.model,
+                cpu_count: info.cpus,
+                cpu_mhz: info.mhz,
+                cpu_sockets: info.sockets,
+                cpu_cores_per_socket: info.cores,
+                cpu_threads_per_core: info.threads,
+                numa_nodes: info.nodes,
+                memory_kib: info.memory,
+            })
+        })
+    }
+
+    /// Live-ish host memory snapshot. Cheap (one syscall on the remote).
+    pub fn get_host_memory(&self) -> Result<crate::libvirt::host_info::HostMemory, crate::models::error::VirtManagerError> {
+        use crate::libvirt::host_info::HostMemory;
+        use crate::models::error::VirtManagerError;
+        self.with_connection(|conn| {
+            let info = conn.get_node_info().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getNodeInfo".into(), reason: e.to_string(),
+            })?;
+            // virNodeGetFreeMemory returns bytes; the safe wrapper exposes u64.
+            let free_bytes = conn.get_free_memory().unwrap_or(0);
+            Ok(HostMemory {
+                total_kib: info.memory,
+                free_kib: free_bytes / 1024,
+            })
+        })
+    }
+
+
+
     /// List all domains (VMs) on the hypervisor.
     pub fn list_all_domains(&self) -> Result<Vec<VmInfo>, VirtManagerError> {
         self.with_connection(|conn| {
