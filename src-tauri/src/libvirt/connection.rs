@@ -124,19 +124,81 @@ impl LibvirtConnection {
         })
     }
 
-    /// Live-ish host memory snapshot. Cheap (one syscall on the remote).
+    /// Live-ish host memory snapshot.
+    ///
+    /// Uses `virNodeGetMemoryStats` to retrieve total / free / buffers /
+    /// cached, then computes `available = free + buffers + cached` (the
+    /// /proc/meminfo `MemAvailable` semantics — what users actually care
+    /// about, since "free" excludes the reclaimable page cache and is
+    /// almost always misleadingly small).
     pub fn get_host_memory(&self) -> Result<crate::libvirt::host_info::HostMemory, crate::models::error::VirtManagerError> {
         use crate::libvirt::host_info::HostMemory;
         use crate::models::error::VirtManagerError;
+        use std::ffi::CStr;
         self.with_connection(|conn| {
-            let info = conn.get_node_info().map_err(|e| VirtManagerError::OperationFailed {
-                operation: "getNodeInfo".into(), reason: e.to_string(),
-            })?;
-            // virNodeGetFreeMemory returns bytes; the safe wrapper exposes u64.
-            let free_bytes = conn.get_free_memory().unwrap_or(0);
+            // Discover number of stats fields first.
+            let conn_ptr = conn.as_ptr();
+            let mut nparams: libc::c_int = 0;
+            let r = unsafe {
+                virt_sys::virNodeGetMemoryStats(
+                    conn_ptr,
+                    virt_sys::VIR_NODE_MEMORY_STATS_ALL_CELLS,
+                    std::ptr::null_mut(),
+                    &mut nparams,
+                    0,
+                )
+            };
+            if r < 0 || nparams <= 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "virNodeGetMemoryStats(probe)".into(),
+                    reason: format!("returned {r}, nparams={nparams}"),
+                });
+            }
+            let mut params: Vec<virt_sys::virNodeMemoryStats> =
+                vec![unsafe { std::mem::zeroed() }; nparams as usize];
+            let r = unsafe {
+                virt_sys::virNodeGetMemoryStats(
+                    conn_ptr,
+                    virt_sys::VIR_NODE_MEMORY_STATS_ALL_CELLS,
+                    params.as_mut_ptr(),
+                    &mut nparams,
+                    0,
+                )
+            };
+            if r < 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "virNodeGetMemoryStats".into(),
+                    reason: format!("returned {r}"),
+                });
+            }
+            let mut total_kib = 0u64;
+            let mut free_kib = 0u64;
+            let mut buffers_kib = 0u64;
+            let mut cached_kib = 0u64;
+            for p in params.iter().take(nparams as usize) {
+                let field = unsafe { CStr::from_ptr(p.field.as_ptr()) }.to_string_lossy();
+                let v = p.value as u64;
+                match field.as_ref() {
+                    "total" => total_kib = v,
+                    "free" => free_kib = v,
+                    "buffers" => buffers_kib = v,
+                    "cached" => cached_kib = v,
+                    _ => {}
+                }
+            }
+            // Fallback if total wasnt provided by the driver.
+            if total_kib == 0 {
+                if let Ok(info) = conn.get_node_info() {
+                    total_kib = info.memory;
+                }
+            }
+            let available_kib = free_kib + buffers_kib + cached_kib;
             Ok(HostMemory {
-                total_kib: info.memory,
-                free_kib: free_bytes / 1024,
+                total_kib,
+                free_kib,
+                buffers_kib,
+                cached_kib,
+                available_kib,
             })
         })
     }

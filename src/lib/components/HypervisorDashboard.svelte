@@ -52,7 +52,7 @@
     return counts;
   });
 
-  let memUsedKib = $derived(mem ? Math.max(0, mem.total_kib - mem.free_kib) : 0);
+  let memUsedKib = $derived(mem ? Math.max(0, mem.total_kib - mem.available_kib) : 0);
   let memPct = $derived(mem && mem.total_kib > 0 ? (memUsedKib / mem.total_kib) * 100 : 0);
 
   let totalPoolCapacity = $derived((appState.pools ?? []).reduce((acc, p) => acc + (p.capacity ?? 0), 0));
@@ -96,7 +96,8 @@
             <span class="muted">of {formatKib(mem.total_kib)}</span>
           </div>
         </div>
-        <p class="muted small">{formatKib(mem.free_kib)} free · {memPct.toFixed(1)}%</p>
+        <p class="muted small">{formatKib(mem.available_kib)} available · {memPct.toFixed(1)}% used</p>
+        <p class="muted small">{formatKib(mem.free_kib)} free · {formatKib(mem.buffers_kib + mem.cached_kib)} reclaimable (buffers + cached)</p>
       {:else}
         <p class="muted">—</p>
       {/if}

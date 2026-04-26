@@ -27,6 +27,12 @@ pub struct HostInfo {
 pub struct HostMemory {
     pub total_kib: u64,
     pub free_kib: u64,
+    pub buffers_kib: u64,
+    pub cached_kib: u64,
+    /// Memory available for new allocations: free + reclaimable
+    /// (buffers + page cache). What `/proc/meminfo: MemAvailable`
+    /// represents on Linux. Always >= free_kib.
+    pub available_kib: u64,
 }
 
 /// Format a libvirt-style version u32 (1000000 * major + 1000 * minor + release)
