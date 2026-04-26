@@ -28,6 +28,8 @@ pub struct AppState {
     current_uri: Mutex<Option<String>>,
     /// When set, mutations to saved_connections are persisted to this file.
     persistence_path: Option<PathBuf>,
+    /// Drained once by `start_event_loop` after Tauri setup.
+    event_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<crate::libvirt::events::DomainEvent>>>,
 }
 
 impl AppState {
@@ -47,7 +49,33 @@ impl AppState {
                 .build()
                 .expect("tokio runtime"),
             persistence_path: None,
+            event_rx: Mutex::new(None),
         }
+    }
+
+    /// Initialise libvirts default event loop and the per-process channel
+    /// that lifecycle callbacks push to. Idempotent.
+    pub fn init_events(&self) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        // events::init_once is the actual gate; only the first call wins,
+        // so subsequent AppState instances (e.g. test) don't relock.
+        crate::libvirt::events::init_once(tx);
+        let mut guard = self.event_rx.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(rx);
+        }
+    }
+
+    /// Take the receiver out so the runtime can drain it.
+    /// Returns None if events have never been initialised, or if a previous
+    /// call already took the receiver.
+    pub fn take_event_rx(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<crate::libvirt::events::DomainEvent>> {
+        self.event_rx.lock().unwrap().take()
+    }
+
+    /// Borrow the runtime so external setup hooks can spawn the drain task.
+    pub fn runtime(&self) -> &tokio::runtime::Runtime {
+        &self.runtime
     }
 
     /// Build an AppState that persists saved_connections to \`path\`.
@@ -63,6 +91,7 @@ impl AppState {
             }
         }
         state.persistence_path = Some(path);
+        state.init_events();
         state
     }
 

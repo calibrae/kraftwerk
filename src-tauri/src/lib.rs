@@ -37,6 +37,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::with_persistence(config_path))
+        .setup(|app| {
+            use tauri::Manager; use tauri::Emitter;
+            let state: tauri::State<'_, AppState> = app.state();
+            if let Some(mut rx) = state.take_event_rx() {
+                let handle = app.handle().clone();
+                state.runtime().spawn(async move {
+                    while let Some(ev) = rx.recv().await {
+                        let _ = handle.emit("domain_event", &ev);
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Connection management
             connection::add_connection,

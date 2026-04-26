@@ -9,7 +9,7 @@
   import CreatePoolDialog from "$lib/components/CreatePoolDialog.svelte";
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import VmWizard from "$lib/components/VmWizard.svelte";
-  import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls } from "$lib/stores/app.svelte.js";
+  import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
   let showConnectionDialog = $state(false);
@@ -24,6 +24,7 @@
   onMount(async () => {
     await loadConnections();
     startAutoPolls();
+    await subscribeDomainEvents();
   });
 </script>
 

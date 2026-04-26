@@ -56,8 +56,14 @@ impl LibvirtConnection {
             host: redact_uri(uri),
             reason: e.to_string(),
         })?;
+        // Register the lifecycle event callback before we install the new
+        // Connect into the guard, so we can roll back on registration error.
+        if let Err(e) = crate::libvirt::events::register(conn.as_ptr()) {
+            log::warn!("event registration failed; falling back to polling: {e}");
+        }
         let mut guard = self.inner.lock().unwrap();
         if let Some(mut old) = guard.take() {
+            crate::libvirt::events::deregister(old.as_ptr());
             let _ = old.close();
         }
         *guard = Some(conn);
@@ -69,6 +75,7 @@ impl LibvirtConnection {
         let mut guard = self.inner.lock().unwrap();
         if let Some(mut conn) = guard.take() {
             log::info!("Closing connection");
+            crate::libvirt::events::deregister(conn.as_ptr());
             let _ = conn.close();
         }
     }

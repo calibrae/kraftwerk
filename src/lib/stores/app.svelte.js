@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 /** @typedef {{ id: string, display_name: string, uri: string, auth_type: string, last_connected: number|null }} SavedConnection */
 /** @typedef {{ name: string, uuid: string, state: string, vcpus: number, memory_mb: number, graphics_type: string|null, has_serial: boolean }} VmInfo */
@@ -14,6 +15,7 @@ let selectedConnectionId = $state(null);
 let selectedVmName = $state(null);
 let error = $state(null);
 let loading = $state(false);
+let inFlight = false;
 
 export function getState() {
   return {
@@ -142,6 +144,36 @@ export function selectVm(name) {
 
 export function clearError() {
   error = null;
+}
+
+let domainEventUnlisten = null;
+
+// Subscribe to libvirt lifecycle events emitted by the Rust backend.
+// Idempotent — calling twice keeps the first subscription.
+export async function subscribeDomainEvents() {
+  if (domainEventUnlisten) return;
+  domainEventUnlisten = await listen("domain_event", async (msg) => {
+    if (!selectedConnectionId) return;
+    if (connectionStates[selectedConnectionId]?.status !== "connected") return;
+    // Coalesce bursts: if a previous refresh is already in-flight just let
+    // it ride. The fast-poll cadence will catch any straggler.
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      vms = await invoke("list_domains");
+    } catch (_) {
+      // ignore — next poll will retry
+    } finally {
+      inFlight = false;
+    }
+  });
+}
+
+export async function unsubscribeDomainEvents() {
+  if (domainEventUnlisten) {
+    domainEventUnlisten();
+    domainEventUnlisten = null;
+  }
 }
 
 // Domain actions
@@ -322,7 +354,6 @@ export async function resizeVolume(poolName, path, capacityBytes) {
 
 let vmPollTimer = null;
 let slowPollTimer = null;
-let inFlight = false;
 // Consecutive failed polls per connection id. Flip to "error" at threshold.
 const pollFailures = new Map();
 const POLL_FAILURE_THRESHOLD = 3;
@@ -353,7 +384,7 @@ export function startAutoPolls() {
     } finally {
       inFlight = false;
     }
-  }, 3000);
+  }, 15000);
 
   slowPollTimer = setInterval(async () => {
     if (!selectedConnectionId) return;
