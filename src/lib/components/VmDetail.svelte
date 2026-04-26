@@ -2,6 +2,7 @@
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
   import SnapshotsPanel from "./SnapshotsPanel.svelte";
+  import RawXmlPanel from "./RawXmlPanel.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
@@ -236,16 +237,7 @@
       {:else if activeTab === "tuning"}
         <CpuTunePanel vmName={vm.name} />
       {:else if activeTab === "xml"}
-        <div class="vm-xml-section">
-          <div class="xml-header">
-            <button class="btn-small" onclick={loadXml} disabled={loadingXml}>
-              {loadingXml ? "Loading..." : domainXml ? "Refresh" : "Load XML"}
-            </button>
-          </div>
-          {#if domainXml}
-            <pre class="xml-content">{domainXml}</pre>
-          {/if}
-        </div>
+        <RawXmlPanel vmName={vm.name} />
       {/if}
     </div>
   {/if}

@@ -130,3 +130,11 @@ pub fn get_domain_stats(
 ) -> Result<crate::libvirt::domain_stats::DomainStatsSample, VirtManagerError> {
     state.libvirt().sample_domain_stats(&name)
 }
+
+/// Replace a domain's persistent definition with the given XML. The
+/// running VM is unaffected until the next start. Used by the raw-XML
+/// editor.
+#[tauri::command]
+pub fn define_domain(state: State<'_, AppState>, xml: String) -> Result<(), VirtManagerError> {
+    state.libvirt().define_domain_xml(&xml)
+}

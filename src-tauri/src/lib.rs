@@ -80,6 +80,7 @@ pub fn run() {
             domain::set_vcpus,
             domain::set_memory_mb,
             domain::set_max_memory_mb,
+            domain::define_domain,
             domain::set_max_vcpus_count,
             // Console
             console::open_console,
