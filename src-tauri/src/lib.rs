@@ -24,6 +24,7 @@ use commands::controllers as cmd_controllers;
 use commands::cpu_tune as cmd_cpu_tune;
 use commands::storage;
 use commands::host;
+use commands::snapshots as snap;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -58,6 +59,10 @@ pub fn run() {
             connection::list_saved_connections,
             host::get_host_info,
             host::get_host_memory,
+            snap::list_snapshots,
+            snap::create_snapshot,
+            snap::revert_snapshot,
+            snap::delete_snapshot,
             connection::connect,
             connection::disconnect,
             connection::get_connection_state,

@@ -4,6 +4,7 @@ pub mod domain_config;
 pub mod domain_stats;
 pub mod hostdev;
 pub mod events;
+pub mod snapshots;
 pub mod host_info;
 pub mod domain_caps;
 pub mod boot_config;

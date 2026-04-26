@@ -18,3 +18,4 @@ pub mod storage;
 pub mod nics;
 pub mod cpu_tune;
 pub mod host;
+pub mod snapshots;

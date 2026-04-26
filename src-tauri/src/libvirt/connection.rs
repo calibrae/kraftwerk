@@ -1410,6 +1410,108 @@ impl LibvirtConnection {
     }
 
 
+    /// List snapshots for a domain. Returns SnapshotInfo entries with
+    /// is_current populated. Empty list when no snapshots exist.
+    pub fn list_snapshots(&self, name: &str) -> Result<Vec<crate::libvirt::snapshots::SnapshotInfo>, VirtManagerError> {
+        use crate::libvirt::snapshots::{parse_snapshot_xml, SnapshotInfo};
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let snaps = domain.list_all_snapshots(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "listAllSnapshots".into(),
+                reason: e.to_string(),
+            })?;
+            let mut out: Vec<SnapshotInfo> = Vec::with_capacity(snaps.len());
+            for snap in &snaps {
+                let xml = match snap.get_xml_desc(0) {
+                    Ok(x) => x,
+                    Err(_) => continue,
+                };
+                let mut info = parse_snapshot_xml(&xml);
+                info.is_current = snap.is_current(0).unwrap_or(false);
+                info.has_metadata = snap.has_metadata(0).unwrap_or(true);
+                out.push(info);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Create a snapshot. The flags param is forwarded — pass 0 for the
+    /// default behaviour (libvirt picks internal vs external based on
+    /// disk format). Common flags:
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_HALT = 1
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_DISK_ONLY = 2
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_REUSE_EXT = 4
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_QUIESCE = 8
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_ATOMIC = 16
+    /// VIR_DOMAIN_SNAPSHOT_CREATE_LIVE = 32
+    pub fn create_snapshot(
+        &self,
+        name: &str,
+        snap_name: &str,
+        description: Option<&str>,
+        flags: u32,
+    ) -> Result<crate::libvirt::snapshots::SnapshotInfo, VirtManagerError> {
+        use crate::libvirt::snapshots::{build_create_xml, parse_snapshot_xml};
+        let xml = build_create_xml(snap_name, description);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let snap = virt::domain_snapshot::DomainSnapshot::create_xml(&domain, &xml, flags)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "snapshotCreateXML".into(),
+                    reason: e.to_string(),
+                })?;
+            let xml_back = snap.get_xml_desc(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "snapshotGetXMLDesc".into(),
+                reason: e.to_string(),
+            })?;
+            let mut info = parse_snapshot_xml(&xml_back);
+            info.is_current = snap.is_current(0).unwrap_or(true);
+            info.has_metadata = snap.has_metadata(0).unwrap_or(true);
+            Ok(info)
+        })
+    }
+
+    /// Revert the domain to a named snapshot.
+    /// Common flags:
+    /// VIR_DOMAIN_SNAPSHOT_REVERT_RUNNING = 1 (force running after revert)
+    /// VIR_DOMAIN_SNAPSHOT_REVERT_PAUSED = 2
+    /// VIR_DOMAIN_SNAPSHOT_REVERT_FORCE = 4 (allow risky reverts)
+    /// VIR_DOMAIN_SNAPSHOT_REVERT_RESET_NVRAM = 8
+    pub fn revert_snapshot(&self, name: &str, snap_name: &str, flags: u32) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let snap = virt::domain_snapshot::DomainSnapshot::lookup_by_name(&domain, snap_name, 0)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "snapshotLookupByName".into(),
+                    reason: e.to_string(),
+                })?;
+            snap.revert(flags).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "snapshotRevert".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Delete a named snapshot. By default deletes only this snapshot —
+    /// children are re-parented to its parent. Pass DELETE_CHILDREN = 1 to
+    /// recursively delete the whole subtree, DELETE_METADATA_ONLY = 2 to
+    /// remove only the libvirt metadata (overlay files keep), or
+    /// DELETE_CHILDREN_ONLY = 4 to keep the snapshot but drop its kids.
+    pub fn delete_snapshot(&self, name: &str, snap_name: &str, flags: u32) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let snap = virt::domain_snapshot::DomainSnapshot::lookup_by_name(&domain, snap_name, 0)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "snapshotLookupByName".into(),
+                    reason: e.to_string(),
+                })?;
+            snap.delete(flags).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "snapshotDelete".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     // -- Network Management --
 
     /// List all virtual networks on the hypervisor.

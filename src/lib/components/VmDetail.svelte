@@ -1,6 +1,7 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
+  import SnapshotsPanel from "./SnapshotsPanel.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
@@ -205,6 +206,7 @@
       <button class="tab" class:active={activeTab === "filesystems"} onclick={() => activeTab = "filesystems"}>Filesystems</button>
       <button class="tab" class:active={activeTab === "controllers"} onclick={() => activeTab = "controllers"}>Controllers</button>
       <button class="tab" class:active={activeTab === "tuning"} onclick={() => activeTab = "tuning"}>Tuning</button>
+      <button class="tab" class:active={activeTab === "snapshots"} onclick={() => activeTab = "snapshots"}>Snapshots</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
