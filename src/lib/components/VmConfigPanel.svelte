@@ -16,6 +16,15 @@
   let editMemoryMb = $state(0);        // current (balloon target)
   let editMaxMemoryMb = $state(0);     // max (boot-time memory)
 
+  // Memory hotplug state ----------------------------------------------------
+  let hotplugCfg = $state(null);       // { max_kib, slots } or null if not configured
+  let hotplugDimms = $state(0);        // count of attached <memory model='dimm'>
+  let editSlots = $state(0);
+  let editMaxHotplugMb = $state(0);
+  let busyHp = $state(false);
+  let dimmSizeMb = $state(1024);
+  let dimmNode = $state(null);
+
   async function load() {
     if (!vmName) return;
     loading = true;
@@ -26,6 +35,16 @@
       editMaxVcpus = config.vcpus.max;
       editMemoryMb = Math.floor(config.current_memory.kib / 1024);
       editMaxMemoryMb = Math.floor(config.memory.kib / 1024);
+      try {
+        const [cfg, count] = await invoke("get_memory_hotplug", { name: vmName });
+        hotplugCfg = cfg;
+        hotplugDimms = count;
+        editSlots = cfg?.slots ?? 0;
+        editMaxHotplugMb = cfg ? Math.floor(cfg.max_kib / 1024) : Math.floor(config.memory.kib / 1024) * 4;
+      } catch (_) {
+        hotplugCfg = null;
+        hotplugDimms = 0;
+      }
     } catch (e) {
       error = e?.message || String(e);
     } finally {
@@ -94,6 +113,47 @@
       busy = false;
     }
   }
+
+  async function applyHotplugConfig() {
+    if (!vmName || busyHp) return;
+    busyHp = true;
+    error = null;
+    try {
+      await invoke("set_max_memory_slots", {
+        name: vmName,
+        maxMb: editMaxHotplugMb,
+        slots: editSlots,
+      });
+      await load();
+    } catch (e) {
+      error = e?.message || String(e);
+    } finally {
+      busyHp = false;
+    }
+  }
+
+  async function addDimm() {
+    if (!vmName || busyHp) return;
+    if (!dimmSizeMb || dimmSizeMb < 8) return;
+    busyHp = true;
+    error = null;
+    try {
+      const running = appState.selectedVm?.state === "running";
+      await invoke("attach_memory_dimm", {
+        name: vmName,
+        sizeMb: dimmSizeMb,
+        node: dimmNode === null || dimmNode === "" ? null : Number(dimmNode),
+        live: running,
+        config: true,
+      });
+      await load();
+    } catch (e) {
+      error = e?.message || String(e);
+    } finally {
+      busyHp = false;
+    }
+  }
+
 
   function formatKib(kib) {
     if (kib >= 1024 * 1024) return `${(kib / 1024 / 1024).toFixed(1)} GiB`;
@@ -175,6 +235,52 @@
       <p class="hint">Current must be &le; Max. If Current exceeds Max the Max is bumped automatically. Max changes only take effect on next boot.</p>
       {#if appState.selectedVm?.state === "running" && editMaxMemoryMb * 1024 !== config.memory.kib}
         <p class="hint warn">Max memory change only takes effect after shutdown + start.</p>
+      {/if}
+    </section>
+
+    <section>
+      <h3>Memory hotplug <span class="badge">requires reboot to change slots</span></h3>
+      {#if hotplugCfg}
+        <p class="info-list-summary muted">
+          {hotplugDimms} of {hotplugCfg.slots} slot{hotplugCfg.slots === 1 ? "" : "s"} used ·
+          headroom up to {Math.floor(hotplugCfg.max_kib / 1024)} MiB total
+        </p>
+      {:else}
+        <p class="muted">Not configured. Set slot count and headroom below to enable live RAM growth.</p>
+      {/if}
+      <div class="edit-row">
+        <label>
+          <span>Slots</span>
+          <input type="number" min="0" max="64" bind:value={editSlots} disabled={busyHp} />
+        </label>
+        <label>
+          <span>Max headroom (MiB)</span>
+          <input type="number" min="0" step="128" bind:value={editMaxHotplugMb} disabled={busyHp} />
+        </label>
+        <button class="btn-apply" onclick={applyHotplugConfig}
+          disabled={busyHp || (hotplugCfg && editSlots === hotplugCfg.slots && editMaxHotplugMb * 1024 === hotplugCfg.max_kib)}>
+          {busyHp ? "Applying..." : "Save"}
+        </button>
+      </div>
+      <p class="hint">Slot count is a guest-visible BIOS limit — bump it before adding more DIMMs than it allows. Max headroom is the upper bound on total RAM after all hotplugs.</p>
+
+      {#if hotplugCfg && hotplugDimms < hotplugCfg.slots}
+        <div class="edit-row">
+          <label>
+            <span>+ DIMM size (MiB)</span>
+            <input type="number" min="128" step="128" bind:value={dimmSizeMb} disabled={busyHp} />
+          </label>
+          <label>
+            <span>NUMA node (optional)</span>
+            <input type="number" min="0" bind:value={dimmNode} placeholder="auto" disabled={busyHp} />
+          </label>
+          <button class="btn-apply" onclick={addDimm} disabled={busyHp || dimmSizeMb < 8}>
+            {busyHp ? "Adding..." : "+ Attach DIMM"}
+          </button>
+        </div>
+        <p class="hint">Hot-attached live ({appState.selectedVm?.state === "running" ? "VM is running, immediate effect" : "VM is shut off, takes effect on next start"}). DIMM size should be a multiple of 2 MiB on x86_64.</p>
+      {:else if hotplugCfg && hotplugDimms >= hotplugCfg.slots}
+        <p class="hint">All slots used. Increase the slot count above (requires shutdown) to add more DIMMs.</p>
       {/if}
     </section>
 

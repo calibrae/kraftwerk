@@ -138,3 +138,41 @@ pub fn get_domain_stats(
 pub fn define_domain(state: State<'_, AppState>, xml: String) -> Result<(), VirtManagerError> {
     state.libvirt().define_domain_xml(&xml)
 }
+
+/// Get hotplug-relevant memory state: maxMemory config (if set) and
+/// number of attached DIMM devices.
+#[tauri::command]
+pub fn get_memory_hotplug(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(Option<crate::libvirt::memory_hotplug::MaxMemoryConfig>, u32), VirtManagerError> {
+    state.libvirt().get_memory_hotplug(&name)
+}
+
+/// Set the `<maxMemory slots>` element. Persistent only — VM reboot
+/// required for the new slot count to take effect.
+#[tauri::command]
+pub fn set_max_memory_slots(
+    state: State<'_, AppState>,
+    name: String,
+    max_mb: u64,
+    slots: u32,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_max_memory_slots(&name, max_mb * 1024, slots)
+}
+
+/// Live-attach a DIMM device. Use `live=true, config=true` to grow the
+/// running guest and persist for next boot.
+#[tauri::command]
+pub fn attach_memory_dimm(
+    state: State<'_, AppState>,
+    name: String,
+    size_mb: u64,
+    node: Option<u32>,
+    live: bool,
+    config: bool,
+) -> Result<(), VirtManagerError> {
+    state
+        .libvirt()
+        .attach_memory_dimm(&name, size_mb * 1024, node, live, config)
+}

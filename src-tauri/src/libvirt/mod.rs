@@ -5,6 +5,7 @@ pub mod domain_stats;
 pub mod hostdev;
 pub mod events;
 pub mod snapshots;
+pub mod memory_hotplug;
 pub mod host_info;
 pub mod domain_caps;
 pub mod boot_config;

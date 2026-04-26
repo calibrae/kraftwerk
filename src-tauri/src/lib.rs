@@ -81,6 +81,9 @@ pub fn run() {
             domain::set_memory_mb,
             domain::set_max_memory_mb,
             domain::define_domain,
+            domain::get_memory_hotplug,
+            domain::set_max_memory_slots,
+            domain::attach_memory_dimm,
             domain::set_max_vcpus_count,
             // Console
             console::open_console,

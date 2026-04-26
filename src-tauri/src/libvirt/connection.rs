@@ -1326,6 +1326,58 @@ impl LibvirtConnection {
         })
     }
 
+    /// Get the persistent `<maxMemory slots>` config plus a count of
+    /// already-attached DIMM devices. Returns `(config_or_none, dimm_count)`.
+    pub fn get_memory_hotplug(
+        &self,
+        name: &str,
+    ) -> Result<(Option<crate::libvirt::memory_hotplug::MaxMemoryConfig>, u32), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        let cfg = crate::libvirt::memory_hotplug::parse_max_memory(&xml);
+        let count = crate::libvirt::memory_hotplug::count_dimms(&xml);
+        Ok((cfg, count))
+    }
+
+    /// Set the `<maxMemory slots="N">` element on a domain. Persistent
+    /// only — libvirt requires the VM to be shut off for this to take
+    /// effect on next boot. Rewrites the XML and redefines.
+    pub fn set_max_memory_slots(
+        &self,
+        name: &str,
+        max_kib: u64,
+        slots: u32,
+    ) -> Result<(), VirtManagerError> {
+        use crate::libvirt::memory_hotplug::{apply_max_memory, MaxMemoryConfig};
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = apply_max_memory(&xml, &MaxMemoryConfig { max_kib, slots });
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Live-attach a DIMM device. Requires that the domain has at least
+    /// one free `<maxMemory slots>` AND that base+attached <= max.
+    /// `live` and `config` map to AFFECT_LIVE / AFFECT_CONFIG.
+    pub fn attach_memory_dimm(
+        &self,
+        name: &str,
+        size_kib: u64,
+        node: Option<u32>,
+        live: bool,
+        config: bool,
+    ) -> Result<(), VirtManagerError> {
+        let xml = crate::libvirt::memory_hotplug::build_dimm_xml(size_kib, node);
+        let flags = domain_modify_flags(live, config);
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .attach_device_flags(&xml, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "attachDeviceDimm".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
     /// Set the **maximum (boot-time) memory** of a domain in KiB.
     ///
     /// libvirt requires this for the persistent config only; live runtime
