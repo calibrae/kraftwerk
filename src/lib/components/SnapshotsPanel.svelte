@@ -2,6 +2,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
+  import { getState } from "$lib/stores/app.svelte.js";
+
+  const appState = getState();
 
   let { vmName } = $props();
 
@@ -14,6 +17,9 @@
   let creating = $state(false);
   let newName = $state("");
   let newDesc = $state("");
+  let diskOnly = $state(false);
+  let quiesce = $state(false);
+  let hostdevs = $state([]);
 
   let unlisten = null;
 
@@ -23,6 +29,11 @@
     err = null;
     try {
       snaps = await invoke("list_snapshots", { name: vmName });
+      try {
+        hostdevs = await invoke("list_domain_hostdevs", { name: vmName });
+      } catch (_) {
+        hostdevs = [];
+      }
     } catch (e) {
       err = e?.message || String(e);
     } finally {
@@ -35,12 +46,19 @@
     busy = true;
     err = null;
     try {
+      // VIR_DOMAIN_SNAPSHOT_CREATE_DISK_ONLY = 2 — skip RAM (required when
+      // VFIO devices block migration). VIR_DOMAIN_SNAPSHOT_CREATE_QUIESCE = 8
+      // — fsfreeze the guest via qemu-guest-agent for filesystem-consistent
+      // disk snapshots; required by some apps to avoid corruption on revert.
+      const flags = (diskOnly ? 2 : 0) | (quiesce ? 8 : 0);
       await invoke("create_snapshot", {
         name: vmName,
         snapName: newName.trim(),
         description: newDesc.trim() || null,
-        flags: 0,
+        flags,
       });
+      diskOnly = false;
+      quiesce = false;
       newName = "";
       newDesc = "";
       creating = false;
@@ -95,6 +113,14 @@
   }
 
   // Build a tree from the flat list. Roots have parent_name == null.
+  // VFIO/PCI passthrough detection: any hostdev whose kind == "pci".
+  // Snapshots that include RAM go through the QEMU migration code path,
+  // and most VFIO PCI devices (GPUs, generic NICs, USB controllers) lack
+  // a migration driver, so libvirt rejects with a hard error. Disk-only
+  // snapshots bypass migration but lose device state on revert.
+  let hasPciPassthrough = $derived(hostdevs.some(d => d.kind === "pci"));
+  let isRunning = $derived(appState?.selectedVm?.state === "running");
+
   let tree = $derived.by(() => {
     const byName = new Map();
     for (const s of snaps) byName.set(s.name, { ...s, children: [] });
@@ -138,7 +164,7 @@
     <h3>Snapshots <span class="count">{snaps.length}</span></h3>
     <div class="actions">
       <button class="btn-small" onclick={load} disabled={loading || busy}>Refresh</button>
-      <button class="btn-primary" onclick={() => { creating = !creating; }} disabled={busy}>
+      <button class="btn-primary" onclick={() => { if (!creating && hasPciPassthrough && isRunning) { diskOnly = true; } creating = !creating; }} disabled={busy}>
         {creating ? "Cancel" : "+ New Snapshot"}
       </button>
     </div>
@@ -158,7 +184,16 @@
         <span>Description (optional)</span>
         <input type="text" bind:value={newDesc} placeholder="why this snapshot" />
       </label>
-      <p class="hint">If the VM is running, RAM is captured too. Internal qcow2 snapshots only in v1 — for multi-disk or external snapshots, use virsh.</p>
+      {#if hasPciPassthrough && isRunning && !diskOnly}
+        <div class="warn">
+          <strong>This VM has PCI passthrough.</strong> RAM snapshots will almost certainly fail unless the assigned device implements VFIO migration (rare outside mlx5 NICs and some vGPU). Use "Disk only" below.
+        </div>
+      {/if}
+      <div class="toggles">
+        <label class="cb"><input type="checkbox" bind:checked={diskOnly} disabled={busy} /><span>Disk only (skip RAM){#if hasPciPassthrough && isRunning} — recommended{/if}</span></label>
+        <label class="cb"><input type="checkbox" bind:checked={quiesce} disabled={busy} /><span>Quiesce guest filesystem (requires qemu-guest-agent)</span></label>
+      </div>
+      <p class="hint">RAM is captured by default when the VM is running. Internal qcow2 snapshots only in v1 — for multi-disk or external, use virsh.</p>
       <div class="row-actions">
         <button class="btn-small" onclick={() => creating = false} disabled={busy}>Cancel</button>
         <button class="btn-primary" onclick={createSnap} disabled={busy || !newName.trim()}>
@@ -310,6 +345,19 @@
   .small { font-size: 11px; }
 
   .hint { font-size: 11px; color: var(--text-muted); margin: 0; }
+
+  .warn {
+    padding: 8px 12px;
+    background: rgba(251, 191, 36, 0.10);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    border-radius: 6px;
+    color: #fbbf24;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .toggles { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .cb { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
+  .cb input { margin: 0; }
 
   .error {
     padding: 8px 12px;
