@@ -82,6 +82,7 @@ pub fn run() {
             domain::set_max_memory_mb,
             domain::define_domain,
             domain::clone_domain,
+            domain::get_qemu_log,
             domain::get_memory_hotplug,
             domain::set_max_memory_slots,
             domain::attach_memory_dimm,

@@ -4,6 +4,7 @@
   import SnapshotsPanel from "./SnapshotsPanel.svelte";
   import RawXmlPanel from "./RawXmlPanel.svelte";
   import MetricsGraphs from "./MetricsGraphs.svelte";
+  import QemuLogPanel from "./QemuLogPanel.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import BulkVmActions from "./BulkVmActions.svelte";
   import CloneVmDialog from "./CloneVmDialog.svelte";
@@ -219,6 +220,7 @@
       <button class="tab" class:active={activeTab === "controllers"} onclick={() => activeTab = "controllers"}>Controllers</button>
       <button class="tab" class:active={activeTab === "tuning"} onclick={() => activeTab = "tuning"}>Tuning</button>
       <button class="tab" class:active={activeTab === "snapshots"} onclick={() => activeTab = "snapshots"}>Snapshots</button>
+      <button class="tab" class:active={activeTab === "log"} onclick={() => activeTab = "log"}>Log</button>
       <button class="tab" class:active={activeTab === "xml"} onclick={() => activeTab = "xml"}>XML</button>
     </div>
 
@@ -251,6 +253,8 @@
         <CpuTunePanel vmName={vm.name} />
       {:else if activeTab === "snapshots"}
         <SnapshotsPanel vmName={vm.name} />
+      {:else if activeTab === "log"}
+        <QemuLogPanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <RawXmlPanel vmName={vm.name} />
       {/if}

@@ -195,3 +195,20 @@ pub fn clone_domain(
     };
     state.libvirt().clone_domain(&source, &opts)
 }
+
+/// Tail the qemu wrapper log for a domain. Reads over the active
+/// connection's SSH target, or locally for `qemu:///system`.
+#[tauri::command]
+pub fn get_qemu_log(
+    state: State<'_, AppState>,
+    name: String,
+    lines: u32,
+) -> Result<String, VirtManagerError> {
+    let uri = state
+        .current_uri()
+        .ok_or_else(|| VirtManagerError::OperationFailed {
+            operation: "qemuLog".into(),
+            reason: "no active connection".into(),
+        })?;
+    crate::libvirt::qemu_log::read_qemu_log(&uri, &name, lines)
+}

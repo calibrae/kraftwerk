@@ -7,6 +7,7 @@ pub mod events;
 pub mod snapshots;
 pub mod memory_hotplug;
 pub mod clone;
+pub mod qemu_log;
 pub mod host_info;
 pub mod domain_caps;
 pub mod boot_config;
