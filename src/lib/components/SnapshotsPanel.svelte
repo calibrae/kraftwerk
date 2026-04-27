@@ -21,6 +21,25 @@
   let quiesce = $state(false);
   let hostdevs = $state([]);
 
+  // Arm-to-confirm: first click sets armedAction = "<kind>:<snapName>";
+  // a second click within 5s actually fires. Replaces the native
+  // confirm() dialog which doesn't reliably surface in some WebView
+  // contexts (Tauri release builds on macOS in particular).
+  let armedAction = $state(null);
+  let armedClearTimer = null;
+  function arm(kind, snapName) {
+    armedAction = `${kind}:${snapName}`;
+    if (armedClearTimer) clearTimeout(armedClearTimer);
+    armedClearTimer = setTimeout(() => { armedAction = null; }, 5000);
+  }
+  function isArmed(kind, snapName) {
+    return armedAction === `${kind}:${snapName}`;
+  }
+  function disarm() {
+    armedAction = null;
+    if (armedClearTimer) { clearTimeout(armedClearTimer); armedClearTimer = null; }
+  }
+
   let unlisten = null;
 
   async function load() {
@@ -71,10 +90,7 @@
   }
 
   async function revert(snap) {
-    const memNote = snap.has_memory
-      ? "\n\nThis snapshot includes RAM, so the VM will resume in the captured state. Network sessions and clock skew may misbehave."
-      : "\n\nThis is a disk-only snapshot — the VM will boot fresh after revert.";
-    if (!confirm(`Revert ${vmName} to snapshot "${snap.name}"? Current state will be lost.${memNote}`)) return;
+    disarm();
     busy = true;
     err = null;
     try {
@@ -90,12 +106,7 @@
   }
 
   async function remove(snap, withChildren) {
-    const childrenNote = withChildren
-      ? `\n\nThis will also delete all ${snap.children?.length || "descendant"} child snapshots.`
-      : snap.children?.length
-        ? "\n\nChildren will be re-parented to this snapshot's parent."
-        : "";
-    if (!confirm(`Delete snapshot "${snap.name}"?${childrenNote}`)) return;
+    disarm();
     busy = true;
     err = null;
     try {
@@ -226,10 +237,22 @@
         {#if node.has_memory}<span class="badge mem">RAM</span>{/if}
       </div>
       <div class="snap-actions">
-        <button class="btn-tiny" onclick={() => revert(node)} disabled={busy}>Revert</button>
-        <button class="btn-tiny danger" onclick={() => remove(node, false)} disabled={busy}>Delete</button>
+        <button class="btn-tiny" class:armed={isArmed("revert", node.name)}
+          onclick={() => isArmed("revert", node.name) ? revert(node) : arm("revert", node.name)}
+          disabled={busy}>
+          {isArmed("revert", node.name) ? (node.has_memory ? "Confirm: revert (incl. RAM)" : "Confirm: revert (disk)") : "Revert"}
+        </button>
+        <button class="btn-tiny danger" class:armed={isArmed("delete", node.name)}
+          onclick={() => isArmed("delete", node.name) ? remove(node, false) : arm("delete", node.name)}
+          disabled={busy}>
+          {isArmed("delete", node.name) ? "Confirm: delete" : "Delete"}
+        </button>
         {#if node.children.length > 0}
-          <button class="btn-tiny danger" onclick={() => remove(node, true)} disabled={busy} title="Delete this and all descendants">Delete tree</button>
+          <button class="btn-tiny danger" class:armed={isArmed("deltree", node.name)}
+            onclick={() => isArmed("deltree", node.name) ? remove(node, true) : arm("deltree", node.name)}
+            disabled={busy} title="Delete this and all descendants">
+            {isArmed("deltree", node.name) ? `Confirm: delete +${node.children.length} children` : "Delete tree"}
+          </button>
         {/if}
       </div>
     </div>
@@ -324,6 +347,17 @@
   .btn-tiny:hover:not(:disabled) { background: var(--bg-hover); }
   .btn-tiny:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-tiny.danger { color: #ef4444; }
+  .btn-tiny.armed {
+    background: rgba(251, 191, 36, 0.18);
+    border-color: #fbbf24;
+    color: #fbbf24;
+    font-weight: 500;
+  }
+  .btn-tiny.danger.armed {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: #ef4444;
+    color: #ef4444;
+  }
 
   .btn-small, .btn-primary {
     font-size: 12px;

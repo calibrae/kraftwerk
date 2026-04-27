@@ -18,38 +18,55 @@ Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
 
 ## Status
 
-Working daily driver against a real KVM host. **353 unit tests + 75
-integration tests** against a live hypervisor, all green.
+Working daily driver against a real KVM host. **370 unit tests + 71
+integration tests** against live hypervisors (per-domain + memory + vCPU max edits), all green.
 
 Feature parity snapshot with Python virt-manager:
 
 | Area | Status |
 |------|--------|
 | Connect / list / lifecycle (start/stop/pause/resume/reboot/force-off) | ✅ |
-| Live CPU + memory editing | ✅ |
+| Multi-hypervisor connection list (right-click edit, persistence, error/red on socket loss) | ✅ |
+| Hypervisor dashboard (host CPU/RAM/storage/networks at a glance) | ✅ |
+| libvirt event-driven UI (push state changes, no 3s polling) | ✅ |
+| Live CPU + memory editing (current + max) | ✅ |
+| Memory hotplug — `<maxMemory slots>` + live DIMM attach | ✅ |
+| Snapshots — list/create/revert/delete with parent-child tree, VFIO-aware (disk-only + quiesce toggles) | ✅ |
+| Raw domain-XML editor (escape hatch for unmodelled fields) | ✅ |
 | Serial console (crytter WASM terminal) | ✅ |
 | VNC console (noVNC, SSH-tunneled) | ✅ |
 | SPICE console (capsaicin, native-Rust, with cursor + absolute mouse) | ✅ |
 | Virtual networks (list + create NAT/route/open/isolated/bridge) | ✅ |
 | Storage pools + volumes (dir/netfs/logical/iscsi, qcow2/raw/iso) | ✅ |
+| Pool/volume delete guards (refuse with named domains when still attached) | ✅ |
 | VM creation wizard (ISO install / import disk / empty) | ✅ |
-| Boot / firmware / machine / features / events editor | ✅ |
-| Disks (add/edit/remove + CD-ROM live media change) | ✅ |
+| Boot / firmware / machine / features / events editor (with state-change warnings) | ✅ |
+| Disks (add/edit/remove + CD-ROM live media change, boot-disk + bus-change confirms) | ✅ |
 | NICs (all source types, live link-state toggle) | ✅ |
 | Display / video / sound / input | ✅ |
 | TPM / RNG / watchdog / panic / balloon / vsock / IOMMU | ✅ |
 | Serial / channels (qemu-ga + vdagent presets) | ✅ |
 | Filesystem passthrough (virtiofs + 9p) + shmem | ✅ |
-| Controllers (USB / SCSI / virtio-serial) | ✅ |
+| Controllers (USB / SCSI / virtio-serial — live model swap warning when devices attached) | ✅ |
 | USB + PCI passthrough (enumerate host devs + attach/detach) | ✅ |
 | CPU model/topology/features, cputune, memtune, NUMA, hugepages, iothreads | ✅ |
 | Live metrics with sparklines (CPU / memory / disk IO / network IO) | ✅ |
-| SEV / TDX launch security | ❌ deferred |
-| Snapshots | ❌ deferred |
-| Migration UI | ❌ deferred |
+| Bulk actions / multi-select | 🚧 phase 2 |
+| Metrics graphs with 1m/5m/1h/24h windows | 🚧 phase 2 |
+| VM cloning (`virt-clone` semantics) | 🚧 phase 2 |
+| Domain log viewer | 🚧 phase 2 |
+| Save / restore / screenshot / coredump | 🚧 phase 2 |
+| Backing-chain visualization + blockcommit/blockpull | 🚧 phase 3 |
+| Disk LUKS encryption + virSecret management | 🚧 phase 3 |
+| nwfilter (firewall rules per NIC) | 🚧 phase 4 |
+| Live migration | 🚧 phase 5 (needs multi-connection AppState refactor) |
+| SEV / SEV-SNP / TDX launch security | 🚧 phase 5 |
+| OVA / OVF import | 🚧 phase 6 |
 
-See [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md) for the full
-surface inventory with constraints and test expectations.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the multi-phase plan
+beyond per-domain config (events, snapshots, raw XML, hotplug were
+phase 1 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
+for the full surface inventory with constraints and test expectations.
 
 ## Running it
 

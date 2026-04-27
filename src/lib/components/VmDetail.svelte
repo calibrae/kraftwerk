@@ -194,6 +194,7 @@
       </div>
     </div>
 
+    <div class="tabs-layout">
     <div class="tab-bar">
       <button class="tab" class:active={activeTab === "overview"} onclick={() => activeTab = "overview"}>Overview</button>
       <button class="tab" class:active={activeTab === "config"} onclick={() => activeTab = "config"}>Configuration</button>
@@ -236,9 +237,12 @@
         <ControllersPanel vmName={vm.name} />
       {:else if activeTab === "tuning"}
         <CpuTunePanel vmName={vm.name} />
+      {:else if activeTab === "snapshots"}
+        <SnapshotsPanel vmName={vm.name} />
       {:else if activeTab === "xml"}
         <RawXmlPanel vmName={vm.name} />
       {/if}
+    </div>
     </div>
   {/if}
 </div>
@@ -253,7 +257,7 @@
     flex-direction: column;
   }
 
-  .detail > :not(.empty-detail):not(:global(.console-container)) {
+  .detail > :not(.empty-detail):not(:global(.console-container)):not(.tabs-layout) {
     padding: 0 24px;
   }
 
@@ -375,34 +379,53 @@
   .btn-action.console:hover { background: #1e40af; }
 
 
+  .tabs-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 0;
+  }
+
   .tab-bar {
     display: flex;
-    gap: 2px;
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 20px;
+    flex-direction: column;
+    gap: 1px;
+    width: 160px;
+    flex-shrink: 0;
+    padding: 8px 8px 8px 24px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
   }
 
   .tab {
-    padding: 8px 16px;
+    padding: 7px 12px;
     background: transparent;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-left: 2px solid transparent;
     color: var(--text-muted);
     font-size: 13px;
     font-family: inherit;
     cursor: pointer;
-    margin-bottom: -1px;
+    text-align: left;
+    border-radius: 0 6px 6px 0;
   }
 
-  .tab:hover { color: var(--text); }
+  .tab:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
 
   .tab.active {
     color: var(--text);
-    border-bottom-color: var(--accent);
+    background: var(--bg-surface);
+    border-left-color: var(--accent);
+    font-weight: 500;
   }
 
   .tab-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
     padding: 0 24px 24px;
   }
 
