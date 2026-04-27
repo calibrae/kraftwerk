@@ -13,6 +13,11 @@ let pools = $state([]);
 let volumesByPool = $state({});
 let selectedConnectionId = $state(null);
 let selectedVmName = $state(null);
+// Set of names for multi-select. Always kept in sync with selectedVmName
+// (selectedVmName === single-selection focus, used by VmDetail). When
+// the set is empty or has one item we collapse to single-select; when
+// >1 we surface the bulk-action toolbar instead of the VmDetail.
+let selectedVmNames = $state(new Set());
 let error = $state(null);
 let loading = $state(false);
 let inFlight = false;
@@ -27,6 +32,8 @@ export function getState() {
     get volumesByPool() { return volumesByPool; },
     get selectedConnectionId() { return selectedConnectionId; },
     get selectedVmName() { return selectedVmName; },
+    get selectedVmNames() { return selectedVmNames; },
+    get hasMultiSelect() { return selectedVmNames.size > 1; },
     get error() { return error; },
     get loading() { return loading; },
     get selectedVm() {
@@ -138,8 +145,65 @@ export async function refreshVms() {
   }
 }
 
-export function selectVm(name) {
+export function selectVm(name, ev) {
+  // Cmd/Ctrl-click: toggle this VM in the multi-set without changing focus.
+  // Shift-click: extend a contiguous range from the focused VM to this one.
+  // Plain click: collapse to a single selection on `name`.
+  if (ev?.metaKey || ev?.ctrlKey) {
+    const next = new Set(selectedVmNames);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    if (selectedVmName && !next.has(selectedVmName)) next.add(selectedVmName);
+    selectedVmNames = next;
+    selectedVmName = name; // focus the most recently clicked
+    return;
+  }
+  if (ev?.shiftKey && selectedVmName) {
+    const order = vms.map(v => v.name);
+    const a = order.indexOf(selectedVmName);
+    const b = order.indexOf(name);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      const next = new Set(order.slice(lo, hi + 1));
+      selectedVmNames = next;
+      selectedVmName = name;
+      return;
+    }
+  }
   selectedVmName = name;
+  selectedVmNames = new Set([name]);
+}
+
+export function clearVmSelection() {
+  selectedVmName = null;
+  selectedVmNames = new Set();
+}
+
+// Apply a per-VM action across the current multi-selection.
+// `action` is a Tauri command name like "start_domain", "shutdown_domain",
+// etc. Each call is awaited sequentially so failures are surfaced in
+// order; the loop continues past errors and reports the count.
+export async function bulkAction(action) {
+  if (selectedVmNames.size === 0) return { ok: 0, failed: 0, errors: [] };
+  loading = true;
+  let ok = 0, failed = 0;
+  const errors = [];
+  for (const name of selectedVmNames) {
+    try {
+      await invoke(action, { name });
+      ok++;
+    } catch (e) {
+      failed++;
+      errors.push({ name, error: e?.message || String(e) });
+    }
+  }
+  loading = false;
+  await refreshVms();
+  if (failed > 0) {
+    error = new Error(`${failed} of ${ok + failed} ${action} calls failed:\n` +
+      errors.map(e => `  ${e.name}: ${e.error}`).join("\n"));
+  }
+  return { ok, failed, errors };
 }
 
 export function clearError() {

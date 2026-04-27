@@ -5,6 +5,7 @@
   import RawXmlPanel from "./RawXmlPanel.svelte";
   import MetricsGraphs from "./MetricsGraphs.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
+  import BulkVmActions from "./BulkVmActions.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
@@ -95,7 +96,9 @@
 </script>
 
 <div class="detail">
-  {#if showSpice && SpiceConsole && appState.selectedVm}
+  {#if appState.hasMultiSelect}
+    <BulkVmActions />
+  {:else if showSpice && SpiceConsole && appState.selectedVm}
     {#key appState.selectedVm.name}
       <SpiceConsole vmName={appState.selectedVm.name} onClose={closeSpice} />
     {/key}

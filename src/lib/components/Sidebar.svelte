@@ -99,10 +99,11 @@
                 <li
                   class="vm-item"
                   class:selected={appState.selectedVmName === vm.name}
-                  onclick={() => selectVm(vm.name)}
+                  class:multi-selected={appState.selectedVmNames.has(vm.name) && appState.selectedVmName !== vm.name}
+                  onclick={(e) => selectVm(vm.name, e)}
                   role="button"
                   tabindex="0"
-                  onkeydown={(e) => e.key === 'Enter' && selectVm(vm.name)}
+                  onkeydown={(e) => e.key === 'Enter' && selectVm(vm.name, e)}
                 >
                   <span class="vm-state-dot" style="background: {stateColors[vm.state] ?? '#9ca3af'}"></span>
                   <span class="vm-name">{vm.name}</span>
@@ -302,6 +303,11 @@
 
   .vm-item:hover { background: var(--bg-hover); }
   .vm-item.selected { background: var(--bg-selected); }
+  .vm-item.multi-selected {
+    background: rgba(96, 165, 250, 0.10);
+    border-left: 2px solid #60a5fa;
+    padding-left: 6px;
+  }
 
   .vm-state-dot {
     width: 6px;
