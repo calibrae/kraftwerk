@@ -6,6 +6,7 @@
   import MetricsGraphs from "./MetricsGraphs.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import BulkVmActions from "./BulkVmActions.svelte";
+  import CloneVmDialog from "./CloneVmDialog.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
@@ -32,6 +33,7 @@
   let loadingSpice = $state(false);
   let showSpice = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
+  let showClone = $state(false);
 
   // Tear down any open console when switching VMs — otherwise the old
   // SpiceConsole/VncConsole/SerialConsole component stays alive with the
@@ -172,6 +174,9 @@
         {#if canForceOff(vm.state)}
           <button class="btn-action danger" onclick={() => destroyDomain(vm.name)}>Force Off</button>
         {/if}
+        {#if vm.state === "shut_off"}
+          <button class="btn-action" onclick={() => showClone = true}>Clone</button>
+        {/if}
         {#if vm.has_serial && vm.state === "running"}
           <button class="btn-action console" onclick={() => showConsole = true}>Serial Console</button>
         {/if}
@@ -252,6 +257,7 @@
     </div>
     </div>
   {/if}
+  <CloneVmDialog bind:open={showClone} source={appState.selectedVm} />
 </div>
 
 <style>

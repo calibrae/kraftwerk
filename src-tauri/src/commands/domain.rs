@@ -176,3 +176,22 @@ pub fn attach_memory_dimm(
         .libvirt()
         .attach_memory_dimm(&name, size_mb * 1024, node, live, config)
 }
+
+/// Full-copy clone a shut-off VM. Each r/w disk volume is duplicated
+/// in its own pool via virStorageVolCreateXMLFrom; CD-ROMs and
+/// readonly/shareable disks pass through unchanged.
+#[tauri::command]
+pub fn clone_domain(
+    state: State<'_, AppState>,
+    source: String,
+    target_name: String,
+    randomize_macs: bool,
+    start_after: bool,
+) -> Result<String, VirtManagerError> {
+    let opts = crate::libvirt::clone::CloneOptions {
+        target_name,
+        randomize_macs,
+        start_after,
+    };
+    state.libvirt().clone_domain(&source, &opts)
+}

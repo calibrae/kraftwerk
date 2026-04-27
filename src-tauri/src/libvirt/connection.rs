@@ -1564,6 +1564,104 @@ impl LibvirtConnection {
         })
     }
 
+    /// Clone a shut-off domain. Iterates the source's disks; for each
+    /// r/w file-backed disk we look up the source volume + its pool,
+    /// build a `<volume>` XML for the target, call
+    /// `virStorageVolCreateXMLFrom` to copy bytes, then rewrite the
+    /// domain XML's `file=...` reference to the new path. CD-ROMs and
+    /// readonly/shareable disks pass through untouched.
+    ///
+    /// Returns the new domain's name on success.
+    pub fn clone_domain(
+        &self,
+        source: &str,
+        opts: &crate::libvirt::clone::CloneOptions,
+    ) -> Result<String, VirtManagerError> {
+        use crate::libvirt::clone::{build_clone_volume_xml, rewrite_domain_xml};
+        use virt::storage_pool::StoragePool;
+        use virt::storage_vol::StorageVol;
+
+        // Source state must be shut off; full-copy clone of a running
+        // VM races with guest writes. We keep the existing VM intact
+        // and return a clear error.
+        let src_xml = self.get_domain_xml(source, true)?;
+
+        // Collect the source disk paths from the XML to drive volume cloning.
+        let mut disk_paths: Vec<String> = Vec::new();
+        let mut rest = src_xml.as_str();
+        while let Some(i) = rest.find("<disk ") {
+            rest = &rest[i..];
+            let close = rest.find("</disk>").unwrap_or(rest.len());
+            let block = &rest[..close];
+            // Skip read-only / cdrom devices (they pass through).
+            let readonly = block.contains("<readonly/>") || block.contains("device='cdrom'") || block.contains("device=\"cdrom\"");
+            if !readonly {
+                if let Some(p) = extract_attr_value(block, "source", "file")
+                    .or_else(|| extract_attr_value(block, "source", "dev")) {
+                    disk_paths.push(p);
+                }
+            }
+            rest = &rest[close..];
+        }
+
+        // Copy each volume.
+        let mut path_map: Vec<(String, String)> = Vec::new();
+        let target_name = opts.target_name.clone();
+        self.with_connection(|conn| -> Result<(), VirtManagerError> {
+            for (idx, src_path) in disk_paths.iter().enumerate() {
+                let src_vol = StorageVol::lookup_by_path(conn, src_path).map_err(|e| {
+                    VirtManagerError::OperationFailed {
+                        operation: "lookupSourceVolume".into(),
+                        reason: format!("{src_path}: {e}"),
+                    }
+                })?;
+                let pool = StoragePool::lookup_by_volume(&src_vol).map_err(|e| {
+                    VirtManagerError::OperationFailed {
+                        operation: "lookupVolumePool".into(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                let info = src_vol.get_info().map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "getVolInfo".into(),
+                    reason: e.to_string(),
+                })?;
+                let format = detect_volume_format(&src_vol).unwrap_or_else(|| "qcow2".into());
+                // Build target name: append index for uniqueness across disks.
+                let new_vol_name = if disk_paths.len() == 1 {
+                    format!("{}.{}", target_name, format)
+                } else {
+                    format!("{}-{}.{}", target_name, idx, format)
+                };
+                let vol_xml = build_clone_volume_xml(&new_vol_name, info.capacity, &format);
+                let new_vol = StorageVol::create_xml_from(&pool, &vol_xml, &src_vol, 0).map_err(|e| {
+                    VirtManagerError::OperationFailed {
+                        operation: "createVolFromSource".into(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                let new_path = new_vol.get_path().map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "getNewVolPath".into(),
+                    reason: e.to_string(),
+                })?;
+                path_map.push((src_path.clone(), new_path));
+            }
+            Ok(())
+        })?;
+
+        // Rewrite the source XML and define the clone.
+        let new_xml = rewrite_domain_xml(&src_xml, &opts.target_name, &path_map);
+        self.define_domain_xml(&new_xml)?;
+
+        if opts.start_after {
+            // Best-effort start; if it fails we still return the clone name
+            // so the user can retry from the UI.
+            if let Err(e) = self.start_domain(&opts.target_name) {
+                log::warn!("clone defined but start failed: {e}");
+            }
+        }
+        Ok(opts.target_name.clone())
+    }
+
     // -- Network Management --
 
     /// List all virtual networks on the hypervisor.
@@ -2156,3 +2254,34 @@ mod preflight_tests {
         assert_eq!(redact_uri("qemu:///system"), "qemu:///system");
     }
 }
+
+
+fn extract_attr_value(block: &str, tag: &str, attr: &str) -> Option<String> {
+    let needle = format!("<{tag} ");
+    let i = block.find(&needle)?;
+    let rest = &block[i..];
+    let close = rest.find("/>").or_else(|| rest.find('>'))?;
+    let header = &rest[..close];
+    for q in ['\'', '"'] {
+        let an = format!("{}={}", attr, q);
+        if let Some(s) = header.find(&an) {
+            let after = &header[s + an.len()..];
+            if let Some(e) = after.find(q) {
+                return Some(after[..e].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn detect_volume_format(vol: &virt::storage_vol::StorageVol) -> Option<String> {
+    let xml = vol.get_xml_desc(0).ok()?;
+    let i = xml.find("<format type=")?;
+    let rest = &xml[i + "<format type=".len()..];
+    let q = rest.chars().next()?;
+    if q != '"' && q != '\'' { return None; }
+    let after = &rest[1..];
+    let e = after.find(q)?;
+    Some(after[..e].to_string())
+}
+
