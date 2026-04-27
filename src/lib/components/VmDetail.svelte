@@ -3,6 +3,7 @@
   import SerialConsole from "./SerialConsole.svelte";
   import SnapshotsPanel from "./SnapshotsPanel.svelte";
   import RawXmlPanel from "./RawXmlPanel.svelte";
+  import MetricsGraphs from "./MetricsGraphs.svelte";
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
@@ -197,6 +198,7 @@
     <div class="tabs-layout">
     <div class="tab-bar">
       <button class="tab" class:active={activeTab === "overview"} onclick={() => activeTab = "overview"}>Overview</button>
+      <button class="tab" class:active={activeTab === "graphs"} onclick={() => activeTab = "graphs"}>Graphs</button>
       <button class="tab" class:active={activeTab === "config"} onclick={() => activeTab = "config"}>Configuration</button>
       <button class="tab" class:active={activeTab === "hardware"} onclick={() => activeTab = "hardware"}>Hardware</button>
       <button class="tab" class:active={activeTab === "disks"} onclick={() => activeTab = "disks"}>Disks</button>
@@ -215,6 +217,8 @@
     <div class="tab-content">
       {#if activeTab === "overview"}
         <VmOverview vmName={vm.name} running={vm.state === "running"} />
+      {:else if activeTab === "graphs"}
+        <MetricsGraphs vmName={vm.name} />
       {:else if activeTab === "config"}
         <VmConfigPanel vmName={vm.name} />
       {:else if activeTab === "hardware"}
