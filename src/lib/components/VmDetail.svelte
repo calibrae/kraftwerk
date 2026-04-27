@@ -1,5 +1,5 @@
 <script>
-  import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml } from "$lib/stores/app.svelte.js";
+  import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml, managedSaveDomain, managedSaveRemove, hasManagedSave, coreDumpDomain, screenshotDomain } from "$lib/stores/app.svelte.js";
   import SerialConsole from "./SerialConsole.svelte";
   import SnapshotsPanel from "./SnapshotsPanel.svelte";
   import RawXmlPanel from "./RawXmlPanel.svelte";
@@ -35,6 +35,9 @@
   let showSpice = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
   let showClone = $state(false);
+  let savedState = $state(false);  // domain has managed-save pending
+  let screenshotData = $state(null); // { mime, data_base64 } when open
+  let coreDumpPath = $state("");
 
   // Tear down any open console when switching VMs — otherwise the old
   // SpiceConsole/VncConsole/SerialConsole component stays alive with the
@@ -76,6 +79,7 @@
     if (!appState.selectedVm) return;
     loadingXml = true;
     domainXml = await getDomainXml(appState.selectedVm.name);
+    savedState = await hasManagedSave(appState.selectedVm.name);
     loadingXml = false;
     showXml = true;
   }
@@ -95,6 +99,32 @@
 
   function closeSpice() {
     showSpice = false;
+  }
+
+  $effect(() => {
+    const v = appState.selectedVm;
+    if (v) {
+      hasManagedSave(v.name).then(r => savedState = r).catch(() => {});
+    }
+  });
+
+  async function doScreenshot() {
+    try {
+      const [mime, data] = await screenshotDomain(appState.selectedVm.name, 0);
+      screenshotData = { mime, data };
+    } catch (e) {
+      // store already records the error
+    }
+  }
+
+  async function doCoreDump() {
+    const v = appState.selectedVm;
+    if (!v) return;
+    const def = `/var/lib/libvirt/qemu/dump/${v.name}-${Date.now()}.dump`;
+    const p = prompt("Core-dump path on the hypervisor:", coreDumpPath || def);
+    if (!p) return;
+    coreDumpPath = p;
+    await coreDumpDomain(v.name, p, false, true);
   }
 </script>
 
@@ -174,6 +204,17 @@
         {/if}
         {#if canForceOff(vm.state)}
           <button class="btn-action danger" onclick={() => destroyDomain(vm.name)}>Force Off</button>
+        {/if}
+        {#if vm.state === "running" || vm.state === "paused"}
+          <button class="btn-action" onclick={() => managedSaveDomain(vm.name)}>Save (suspend to disk)</button>
+        {/if}
+        {#if savedState}
+          <span class="saved-pill" title="Resume on next start">SAVED</span>
+          <button class="btn-action" onclick={() => managedSaveRemove(vm.name)}>Discard saved state</button>
+        {/if}
+        {#if vm.state === "running"}
+          <button class="btn-action" onclick={doScreenshot}>Screenshot</button>
+          <button class="btn-action" onclick={doCoreDump}>Core dump</button>
         {/if}
         {#if vm.state === "shut_off"}
           <button class="btn-action" onclick={() => showClone = true}>Clone</button>
@@ -262,6 +303,18 @@
     </div>
   {/if}
   <CloneVmDialog bind:open={showClone} source={appState.selectedVm} />
+  {#if screenshotData}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="ss-backdrop" onclick={() => screenshotData = null} role="dialog" aria-modal="true">
+      <div class="ss-dialog" onclick={(e) => e.stopPropagation()} role="document">
+        <header><h3>Screenshot · {screenshotData.mime}</h3>
+          <button class="btn-small" onclick={() => screenshotData = null}>Close</button>
+        </header>
+        <img class="ss-img" alt="VM screenshot" src="data:{screenshotData.mime};base64,{screenshotData.data}" />
+        <p class="muted small">Right-click the image to save locally.</p>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -482,5 +535,50 @@
     font-family: 'SF Mono', 'Fira Code', monospace;
     max-height: 400px;
     overflow-y: auto;
+  }
+
+  .saved-pill {
+    background: rgba(96, 165, 250, 0.18);
+    color: #60a5fa;
+    border: 1px solid rgba(96, 165, 250, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    align-self: center;
+  }
+  .ss-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .ss-dialog {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    max-width: 92vw;
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ss-dialog header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ss-dialog h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .ss-img {
+    max-width: 88vw;
+    max-height: 76vh;
+    object-fit: contain;
+    background: #000;
+    border-radius: 4px;
   }
 </style>

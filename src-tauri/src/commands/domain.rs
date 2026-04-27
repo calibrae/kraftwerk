@@ -212,3 +212,45 @@ pub fn get_qemu_log(
         })?;
     crate::libvirt::qemu_log::read_qemu_log(&uri, &name, lines)
 }
+
+/// Suspend the VM to libvirt-managed state. Next start resumes from it.
+#[tauri::command]
+pub fn managed_save_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
+    state.libvirt().managed_save(&name)
+}
+
+/// Whether the domain has a pending managed-save state.
+#[tauri::command]
+pub fn has_managed_save(state: State<'_, AppState>, name: String) -> Result<bool, VirtManagerError> {
+    state.libvirt().has_managed_save(&name)
+}
+
+/// Discard the pending managed-save state without resuming.
+#[tauri::command]
+pub fn managed_save_remove(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
+    state.libvirt().managed_save_remove(&name)
+}
+
+/// Memory dump to a hypervisor-side file path.
+#[tauri::command]
+pub fn core_dump_domain(
+    state: State<'_, AppState>,
+    name: String,
+    path: String,
+    crash_after: bool,
+    live: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().core_dump(&name, &path, crash_after, live)
+}
+
+/// Screenshot the guest console. Returns mime type + base64 PNG/PPM.
+#[tauri::command]
+pub fn screenshot_domain(
+    state: State<'_, AppState>,
+    name: String,
+    screen: u32,
+) -> Result<(String, String), VirtManagerError> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let (mime, bytes) = state.libvirt().screenshot(&name, screen)?;
+    Ok((mime, STANDARD.encode(bytes)))
+}

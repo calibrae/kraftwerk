@@ -1662,6 +1662,124 @@ impl LibvirtConnection {
         Ok(opts.target_name.clone())
     }
 
+    /// Managed-save: libvirt suspends the VM to its own state file and
+    /// shuts the qemu process down. The next `start_domain` resumes
+    /// from that file automatically; no caller-managed paths.
+    /// Equivalent to `virsh managedsave`.
+    pub fn managed_save(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .managed_save(0)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "managedSave".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Whether the domain currently has a managed-save state on disk
+    /// waiting to be resumed.
+    pub fn has_managed_save(&self, name: &str) -> Result<bool, VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .has_managed_save(0)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "hasManagedSave".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Discard a pending managed-save state without resuming. Next
+    /// `start_domain` will boot fresh from disk.
+    pub fn managed_save_remove(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .managed_save_remove(0)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "managedSaveRemove".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Dump VM memory to a hypervisor-side file path. `crash` controls
+    /// whether the VM is left in a CRASHED state after dump (otherwise
+    /// it resumes). Format: 0 = raw, 1 = compressed-zlib, 2 = lz4.
+    /// VIR_DUMP_LIVE = 1 (don't pause for dump if possible),
+    /// VIR_DUMP_CRASH = 2, VIR_DUMP_BYPASS_CACHE = 4.
+    pub fn core_dump(
+        &self,
+        name: &str,
+        path: &str,
+        crash_after: bool,
+        live: bool,
+    ) -> Result<(), VirtManagerError> {
+        let mut flags: u32 = 0;
+        if live { flags |= 1; }
+        if crash_after { flags |= 2; }
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            domain
+                .core_dump(path, flags)
+                .map(|_| ())
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "coreDump".into(),
+                    reason: e.to_string(),
+                })
+        })
+    }
+
+    /// Capture a screenshot of the guest console for the given screen
+    /// (0 = primary). Returns mime type + raw bytes which the frontend
+    /// can base64-encode for display.
+    pub fn screenshot(
+        &self,
+        name: &str,
+        screen: u32,
+    ) -> Result<(String, Vec<u8>), VirtManagerError> {
+        use virt::stream::Stream;
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let stream = Stream::new(conn, 0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "streamNew".into(),
+                reason: e.to_string(),
+            })?;
+            let mime = domain.screenshot(&stream, screen, 0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "screenshot".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            // Drain the stream into memory.
+            let mut bytes: Vec<u8> = Vec::with_capacity(256 * 1024);
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = stream.recv(&mut buf).map_err(|e| {
+                    VirtManagerError::OperationFailed {
+                        operation: "streamRecv".into(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                if n == 0 { break; }
+                bytes.extend_from_slice(&buf[..n as usize]);
+                if bytes.len() > 50 * 1024 * 1024 {
+                    return Err(VirtManagerError::OperationFailed {
+                        operation: "screenshot".into(),
+                        reason: "screenshot exceeds 50 MiB".into(),
+                    });
+                }
+            }
+            let _ = stream.finish();
+            Ok((mime, bytes))
+        })
+    }
+
     // -- Network Management --
 
     /// List all virtual networks on the hypervisor.

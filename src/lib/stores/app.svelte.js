@@ -265,6 +265,43 @@ export async function destroyDomain(name) {
   } catch (e) { error = e; }
 }
 
+export async function managedSaveDomain(name) {
+  try {
+    error = null;
+    await invoke("managed_save_domain", { name });
+    await refreshVms();
+  } catch (e) { error = e; }
+}
+
+export async function managedSaveRemove(name) {
+  try {
+    error = null;
+    await invoke("managed_save_remove", { name });
+    await refreshVms();
+  } catch (e) { error = e; }
+}
+
+export async function hasManagedSave(name) {
+  try {
+    return await invoke("has_managed_save", { name });
+  } catch (_) { return false; }
+}
+
+export async function coreDumpDomain(name, path, crashAfter, live) {
+  try {
+    error = null;
+    await invoke("core_dump_domain", { name, path, crashAfter, live });
+    await refreshVms();
+  } catch (e) { error = e; throw e; }
+}
+
+export async function screenshotDomain(name, screen = 0) {
+  try {
+    error = null;
+    return await invoke("screenshot_domain", { name, screen });
+  } catch (e) { error = e; throw e; }
+}
+
 export async function suspendDomain(name) {
   try {
     error = null;
