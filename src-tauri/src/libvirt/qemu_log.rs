@@ -9,7 +9,11 @@
 //! Local-only `qemu:///system` connections also work — we drop the SSH
 //! step and read the file directly.
 
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
 
 use crate::libvirt::vnc_proxy::parse_ssh_target;
 use crate::models::error::VirtManagerError;
@@ -38,28 +42,57 @@ pub fn read_qemu_log(uri: &str, vm_name: &str, lines: u32) -> Result<String, Vir
     let lines = lines.clamp(1, 5000);
 
     if let Some(target) = parse_ssh_target(uri) {
+        // Hard 15s wall-clock timeout: BatchMode + ConnectTimeout don't
+        // always cover GUI-launched contexts where ssh-agent or known_hosts
+        // can stall. We kill the child unconditionally past the budget.
         let remote_cmd = format!("tail -n {} {}", lines, shell_escape(&path));
-        let output = Command::new("ssh")
-            .arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("ConnectTimeout=5")
-            .arg("--")
+        let mut child = Command::new("ssh")
+            .arg("-o").arg("BatchMode=yes")
+            .arg("-o").arg("ConnectTimeout=5")
+            .arg("-o").arg("StrictHostKeyChecking=accept-new")
             .arg(&target)
             .arg(&remote_cmd)
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| VirtManagerError::OperationFailed {
                 operation: "qemuLogSpawnSsh".into(),
                 reason: e.to_string(),
             })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let status = match child.wait_timeout(Duration::from_secs(15)) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "qemuLogSshTimeout".into(),
+                    reason: format!("ssh to {} timed out after 15s; check known_hosts and ssh-agent", target),
+                });
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "qemuLogSshWait".into(),
+                    reason: e.to_string(),
+                });
+            }
+        };
+        let mut stdout = String::new();
+        if let Some(mut s_out) = child.stdout.take() { let _ = s_out.read_to_string(&mut stdout); }
+        let mut stderr = String::new();
+        if let Some(mut s_err) = child.stderr.take() { let _ = s_err.read_to_string(&mut stderr); }
+        if !status.success() {
             return Err(VirtManagerError::OperationFailed {
                 operation: "qemuLogSshTail".into(),
-                reason: stderr.trim().to_string(),
+                reason: if stderr.trim().is_empty() {
+                    format!("ssh exited with {:?}", status.code())
+                } else {
+                    stderr.trim().to_string()
+                },
             });
         }
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(stdout)
     } else {
         // Local read.
         std::fs::read_to_string(&path).map_err(|e| VirtManagerError::OperationFailed {
