@@ -18,7 +18,7 @@ Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
 
 ## Status
 
-Working daily driver against a real KVM host. **370 unit tests + 71
+Working daily driver against a real KVM host. **376 unit tests + 71
 integration tests** against live hypervisors (per-domain + memory + vCPU max edits), all green.
 
 Feature parity snapshot with Python virt-manager:
@@ -51,11 +51,11 @@ Feature parity snapshot with Python virt-manager:
 | USB + PCI passthrough (enumerate host devs + attach/detach) | ✅ |
 | CPU model/topology/features, cputune, memtune, NUMA, hugepages, iothreads | ✅ |
 | Live metrics with sparklines (CPU / memory / disk IO / network IO) | ✅ |
-| Bulk actions / multi-select | 🚧 phase 2 |
-| Metrics graphs with 1m/5m/1h/24h windows | 🚧 phase 2 |
-| VM cloning (`virt-clone` semantics) | 🚧 phase 2 |
-| Domain log viewer | 🚧 phase 2 |
-| Save / restore / screenshot / coredump | 🚧 phase 2 |
+| Bulk actions / multi-select (cmd/shift-click + start/stop/force-off/etc) | ✅ |
+| Metrics graphs (CPU/RAM/disk-io/net-io · 1m/5m/15m/1h windows) | ✅ |
+| VM cloning (full-copy via virStorageVolCreateXMLFrom · MAC strip · start-after) | ✅ |
+| qemu log viewer (tails /var/log/libvirt/qemu/<vm>.log over SSH) | ✅ |
+| Managed save / restore / screenshot / coredump | ✅ |
 | Backing-chain visualization + blockcommit/blockpull | 🚧 phase 3 |
 | Disk LUKS encryption + virSecret management | 🚧 phase 3 |
 | nwfilter (firewall rules per NIC) | 🚧 phase 4 |
@@ -65,7 +65,7 @@ Feature parity snapshot with Python virt-manager:
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the multi-phase plan
 beyond per-domain config (events, snapshots, raw XML, hotplug were
-phase 1 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
+phases 1 + 2 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
 for the full surface inventory with constraints and test expectations.
 
 ## Running it
