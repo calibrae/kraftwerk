@@ -30,8 +30,12 @@
 
   onMount(load);
 
+  let lastLoadedFor = null;
   $effect(() => {
-    if (vmName) load();
+    if (vmName && vmName !== lastLoadedFor) {
+      lastLoadedFor = vmName;
+      load();
+    }
   });
 </script>
 

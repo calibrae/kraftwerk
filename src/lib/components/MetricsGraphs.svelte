@@ -172,8 +172,12 @@
     if (timer) clearInterval(timer);
   });
 
+  let lastSeenVm = null;
   $effect(() => {
-    if (vmName) clear();
+    if (vmName && vmName !== lastSeenVm) {
+      lastSeenVm = vmName;
+      clear();
+    }
   });
 </script>
 

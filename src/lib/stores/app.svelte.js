@@ -219,15 +219,18 @@ export async function subscribeDomainEvents() {
   domainEventUnlisten = await listen("domain_event", async (msg) => {
     if (!selectedConnectionId) return;
     if (connectionStates[selectedConnectionId]?.status !== "connected") return;
-    // Coalesce bursts: if a previous refresh is already in-flight just let
-    // it ride. The fast-poll cadence will catch any straggler.
     if (inFlight) return;
     inFlight = true;
     try {
-      vms = await invoke("list_domains");
-    } catch (_) {
-      // ignore — next poll will retry
-    } finally {
+      const fresh = await invoke("list_domains");
+      // Only reassign if content actually changed — otherwise consumers
+      // that depend on appState.selectedVm reference (e.g. $effect-based
+      // auto-loaders in QemuLogPanel/MetricsGraphs/SnapshotsPanel) re-run
+      // on every libvirt event and spawn duplicate work.
+      if (JSON.stringify(fresh) !== JSON.stringify(vms)) {
+        vms = fresh;
+      }
+    } catch (_) {} finally {
       inFlight = false;
     }
   });
