@@ -18,7 +18,7 @@ Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
 
 ## Status
 
-Working daily driver against a real KVM host. **391 unit tests + 75
+Working daily driver against a real KVM host. **399 unit tests + 75
 integration tests** against live hypervisors (per-domain + memory + vCPU max edits), all green.
 
 Feature parity snapshot with Python virt-manager:
@@ -61,14 +61,17 @@ Feature parity snapshot with Python virt-manager:
 | iSCSI CHAP / Ceph RBD pool auth | ✅ |
 | Pool types: dir, fs, netfs, logical, iscsi, iscsi-direct, rbd, zfs | ✅ |
 | Volume upload streaming (local file → pool over virStream) | ✅ |
-| nwfilter (firewall rules per NIC) | 🚧 phase 4 |
+| nwfilter (firewall rules per NIC) | ✅ |
+| DHCP reservations + DNS hostname overrides on virtual networks | ✅ |
+| Static routes on virtual networks | ✅ |
+| Open vSwitch virtualport on NICs | ✅ |
 | Live migration | 🚧 phase 5 (needs multi-connection AppState refactor) |
 | SEV / SEV-SNP / TDX launch security | 🚧 phase 5 |
 | OVA / OVF import | 🚧 phase 6 |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the multi-phase plan
 beyond per-domain config (events, snapshots, raw XML, hotplug were
-phases 1 + 2 + 3 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
+phases 1 + 2 + 3 + 4 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
 for the full surface inventory with constraints and test expectations.
 
 ## Running it
