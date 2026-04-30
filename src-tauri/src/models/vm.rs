@@ -84,6 +84,11 @@ pub struct VmInfo {
     pub memory_mb: u64,
     pub graphics_type: Option<GraphicsType>,
     pub has_serial: bool,
+    /// True when the domain has the kraftwerk template marker. UI uses
+    /// it to show a Template badge and route the clone action through
+    /// the cloud-init seed flow.
+    #[serde(default)]
+    pub is_template: bool,
 }
 
 #[cfg(test)]

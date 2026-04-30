@@ -14,6 +14,7 @@ pub fn fake_vm(name: &str, state: VmState) -> VmInfo {
         memory_mb: 2048,
         graphics_type: Some(GraphicsType::Vnc),
         has_serial: true,
+        is_template: false,
     }
 }
 

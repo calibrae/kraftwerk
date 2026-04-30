@@ -21,3 +21,4 @@ pub mod host;
 pub mod snapshots;
 pub mod launch_security;
 pub mod migration;
+pub mod templates;

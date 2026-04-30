@@ -9,6 +9,7 @@
   import BulkVmActions from "./BulkVmActions.svelte";
   import CloneVmDialog from "./CloneVmDialog.svelte";
   import MigrateVmDialog from "./MigrateVmDialog.svelte";
+  import CloneFromTemplateDialog from "./CloneFromTemplateDialog.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
@@ -37,6 +38,17 @@
   let activeTab = $state("overview"); // "overview" | "config"
   let showClone = $state(false);
   let showMigrate = $state(false);
+  let showInstantiate = $state(false);
+
+  async function toggleTemplate(vm) {
+    try {
+      await invoke("set_template_flag", { name: vm.name, mark: !vm.is_template });
+      const { refreshVms } = await import("$lib/stores/app.svelte.js");
+      await refreshVms();
+    } catch (e) {
+      console.error(e);
+    }
+  }
   let savedState = $state(false);  // domain has managed-save pending
   let screenshotData = $state(null); // { mime, data_base64 } when open
   let coreDumpPath = $state("");
@@ -163,6 +175,7 @@
           {stateLabels[vm.state] ?? vm.state}
         </span>
         <h2>{vm.name}</h2>
+        {#if vm.is_template}<span class="template-badge" title="kraftwerk template — clone with cloud-init">TEMPLATE</span>{/if}
       </div>
       <p class="vm-uuid">{vm.uuid}</p>
     </div>
@@ -221,6 +234,12 @@
         {/if}
         {#if vm.state === "shut_off"}
           <button class="btn-action" onclick={() => showClone = true}>Clone</button>
+          {#if vm.is_template}
+            <button class="btn-action template" onclick={() => showInstantiate = true}>Instantiate (cloud-init)</button>
+            <button class="btn-action" onclick={() => toggleTemplate(vm)}>Unmark template</button>
+          {:else}
+            <button class="btn-action" onclick={() => toggleTemplate(vm)}>Mark as template</button>
+          {/if}
         {/if}
         {#if vm.has_serial && vm.state === "running"}
           <button class="btn-action console" onclick={() => showConsole = true}>Serial Console</button>
@@ -307,6 +326,7 @@
   {/if}
   <CloneVmDialog bind:open={showClone} source={appState.selectedVm} />
   <MigrateVmDialog bind:open={showMigrate} vmName={vm?.name} sourceConnectionId={appState.selectedConnectionId} />
+  <CloneFromTemplateDialog bind:open={showInstantiate} source={appState.selectedVm} />
   {#if screenshotData}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="ss-backdrop" onclick={() => screenshotData = null} role="dialog" aria-modal="true">
@@ -552,6 +572,19 @@
     letter-spacing: 0.05em;
     align-self: center;
   }
+
+  .template-badge {
+    background: rgba(217, 70, 239, 0.18);
+    color: #f0abfc;
+    border: 1px solid rgba(217, 70, 239, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    align-self: center;
+  }
+  .btn-action.template { color: #f0abfc; border-color: rgba(217, 70, 239, 0.4); }
   .ss-backdrop {
     position: fixed;
     inset: 0;

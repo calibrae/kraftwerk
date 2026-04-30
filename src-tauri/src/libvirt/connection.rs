@@ -2857,7 +2857,7 @@ impl LibvirtConnection {
         let vcpus = info.nr_virt_cpu;
         let memory_kb = info.memory;
 
-        let (graphics_type, has_serial) = match domain.get_xml_desc(0) {
+        let (graphics_type, has_serial, is_template) = match domain.get_xml_desc(0) {
             Ok(xml) => {
                 let gfx = xml_helpers::extract_graphics_type(&xml).and_then(|s| match s.as_str() {
                     "vnc" => Some(GraphicsType::Vnc),
@@ -2865,9 +2865,10 @@ impl LibvirtConnection {
                     _ => None,
                 });
                 let serial = xml_helpers::has_serial_console(&xml);
-                (gfx, serial)
+                let tpl = crate::libvirt::templates::is_template(&xml);
+                (gfx, serial, tpl)
             }
-            Err(_) => (None, false),
+            Err(_) => (None, false, false),
         };
 
         Some(VmInfo {
@@ -2878,6 +2879,7 @@ impl LibvirtConnection {
             memory_mb: memory_kb / 1024,
             graphics_type,
             has_serial,
+            is_template,
         })
     }
 
@@ -3116,6 +3118,216 @@ impl LibvirtConnection {
         })
     }
 
+    /// Clone a template domain into a new VM, optionally seeded by a
+    /// cloud-init NoCloud ISO. Wraps `clone_domain`, then post-edits
+    /// the cloned XML to (a) drop the template marker so the new VM
+    /// is a regular guest, and (b) attach a fresh cloud-init seed ISO
+    /// when `cloud_init` is provided.
+    ///
+    /// The seed ISO is written next to the cloned VM's primary disk
+    /// (same directory) so it inherits whatever pool the disk lives in.
+    pub fn clone_from_template(
+        &self,
+        template_name: &str,
+        opts: &crate::libvirt::clone::CloneOptions,
+        cloud_init: Option<&crate::libvirt::templates::CloudInitConfig>,
+    ) -> Result<String, VirtManagerError> {
+        // Caller may have toggled start_after, but we always start last
+        // (after the seed ISO is attached) so cloud-init runs on first boot.
+        let mut clone_opts = opts.clone();
+        let user_wants_start = clone_opts.start_after;
+        clone_opts.start_after = false;
+        let new_name = self.clone_domain(template_name, &clone_opts)?;
+
+        // Strip the template marker on the clone — clones are guests, not templates.
+        if let Ok(cloned_xml) = self.get_domain_xml(&new_name, true) {
+            let stripped = crate::libvirt::templates::remove_template_marker(&cloned_xml);
+            if stripped != cloned_xml {
+                let _ = self.define_domain_xml(&stripped);
+            }
+        }
+
+        if let Some(ci) = cloud_init {
+            let cloned_xml = self.get_domain_xml(&new_name, true)?;
+            // Derive the seed dir from the first disk path in the clone.
+            let disk_path = first_disk_source(&cloned_xml).ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "cloudInitSeed".into(),
+                reason: "cloned VM has no disk path to derive seed dir from".into(),
+            })?;
+            let dest_dir = std::path::Path::new(&disk_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "/var/lib/libvirt/images".into());
+            let iso_filename = format!("{new_name}-seed.iso");
+
+            let hostname = ci
+                .hostname
+                .clone()
+                .unwrap_or_else(|| new_name.clone());
+            let meta = crate::libvirt::templates::build_meta_data(&new_name, &hostname);
+            let user = crate::libvirt::templates::build_user_data(ci);
+            let iso_path = self.build_cloud_init_iso(
+                &dest_dir,
+                &iso_filename,
+                &meta,
+                &user,
+                ci.network_config.as_deref(),
+            )?;
+
+            // Splice the cdrom into the cloned XML at the first free
+            // sda/sdb/sdc slot. virsh + libvirt accept duplicate slots
+            // only across different buses.
+            let target_dev = first_free_sd_slot(&cloned_xml);
+            let cdrom_xml = crate::libvirt::templates::build_seed_iso_disk_xml(&iso_path, &target_dev);
+            let new_xml = inject_disk_before_close(&cloned_xml, &cdrom_xml);
+            self.define_domain_xml(&new_xml)?;
+        }
+
+        if user_wants_start {
+            if let Err(e) = self.start_domain(&new_name) {
+                log::warn!("template clone defined but start failed: {e}");
+            }
+        }
+        Ok(new_name)
+    }
+
+    /// Toggle the kraftwerk template marker on a domain. Persistent
+    /// only; the marker is preserved across libvirt restarts because
+    /// it lives in the domain's `<metadata>` block.
+    pub fn set_template_flag(&self, name: &str, mark: bool) -> Result<(), VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = if mark {
+            crate::libvirt::templates::add_template_marker(&xml)
+        } else {
+            crate::libvirt::templates::remove_template_marker(&xml)
+        };
+        self.define_domain_xml(&new_xml)
+    }
+
+    /// Domains marked as templates. Same return shape as `list_all_domains`,
+    /// just filtered.
+    pub fn list_templates(&self) -> Result<Vec<crate::models::vm::VmInfo>, VirtManagerError> {
+        let all = self.list_all_domains()?;
+        let mut out = Vec::new();
+        for vm in all {
+            if let Ok(xml) = self.get_domain_xml(&vm.name, true) {
+                if crate::libvirt::templates::is_template(&xml) {
+                    out.push(vm);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Build a NoCloud cloud-init seed ISO on the hypervisor host and
+    /// return its absolute path. Requires `genisoimage`, `xorrisofs`,
+    /// or `mkisofs` to be on the host's PATH (one of those is on every
+    /// libvirt host in practice). The ISO is written to `dest_dir`
+    /// which must be a libvirt-managed pool path so the new domain
+    /// can reference it.
+    ///
+    /// The contents (meta-data + user-data) are base64-encoded on the
+    /// way over SSH so embedded newlines / quotes / metacharacters in
+    /// hostnames + ssh keys can't break out of the shell context.
+    pub fn build_cloud_init_iso(
+        &self,
+        dest_dir: &str,
+        iso_filename: &str,
+        meta_data: &str,
+        user_data: &str,
+        network_config: Option<&str>,
+    ) -> Result<String, VirtManagerError> {
+        use base64::Engine;
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+        use wait_timeout::ChildExt;
+
+        let uri = self.uri()?;
+        let target = crate::libvirt::vnc_proxy::parse_ssh_target(&uri).ok_or_else(|| {
+            VirtManagerError::OperationFailed {
+                operation: "buildSeedIso".into(),
+                reason: "cloud-init seed build requires a qemu+ssh URI".into(),
+            }
+        })?;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let meta_b64 = b64.encode(meta_data);
+        let user_b64 = b64.encode(user_data);
+        let network_b64 = network_config.map(|s| b64.encode(s));
+
+        let iso_path = format!("{}/{}", dest_dir.trim_end_matches('/'), iso_filename);
+        // Quote the path with single quotes — UUIDs and pool paths don't
+        // contain quotes themselves so this is safe.
+        let mut script = String::new();
+        script.push_str("set -eu\n");
+        script.push_str("d=$(mktemp -d /tmp/k-seed-XXXXXX)\n");
+        script.push_str(&format!("echo {meta_b64} | base64 -d > $d/meta-data\n"));
+        script.push_str(&format!("echo {user_b64} | base64 -d > $d/user-data\n"));
+        if let Some(nw) = network_b64 {
+            script.push_str(&format!("echo {nw} | base64 -d > $d/network-config\n"));
+        }
+        // genisoimage / xorrisofs / mkisofs — pick the first available.
+        script.push_str(&format!(
+            "if command -v genisoimage >/dev/null 2>&1; then iso=genisoimage; \
+             elif command -v xorrisofs >/dev/null 2>&1; then iso=xorrisofs; \
+             elif command -v mkisofs >/dev/null 2>&1; then iso=mkisofs; \
+             else echo NO_ISO_TOOL >&2; exit 1; fi\n"
+        ));
+        script.push_str(&format!(
+            "$iso -quiet -output '{iso_path}' -volid cidata -joliet -rock $d/meta-data $d/user-data"
+        ));
+        if network_config.is_some() {
+            script.push_str(" $d/network-config");
+        }
+        script.push_str("\nrm -rf $d\n");
+        script.push_str(&format!("echo OK_PATH={iso_path}\n"));
+
+        let mut child = Command::new("ssh")
+            .arg("-o").arg("BatchMode=yes")
+            .arg("-o").arg("ConnectTimeout=5")
+            .arg(&target)
+            .arg("bash -s")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| VirtManagerError::OperationFailed {
+                operation: "spawnSshIso".into(),
+                reason: e.to_string(),
+            })?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(script.as_bytes()).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "writeIsoScript".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+        }
+        let status = child
+            .wait_timeout(Duration::from_secs(60))
+            .map_err(|e| VirtManagerError::OperationFailed {
+                operation: "waitIsoScript".into(),
+                reason: e.to_string(),
+            })?
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "waitIsoScript".into(),
+                reason: "timed out".into(),
+            })?;
+        if !status.success() {
+            let mut err_buf = String::new();
+            if let Some(mut s) = child.stderr.take() {
+                use std::io::Read;
+                let _ = s.read_to_string(&mut err_buf);
+            }
+            return Err(VirtManagerError::OperationFailed {
+                operation: "buildSeedIso".into(),
+                reason: format!("ssh script failed: {err_buf}"),
+            });
+        }
+        Ok(iso_path)
+    }
+
     /// Initiate a live migration of `name` from this connection (the
     /// source) to `dest` (a separately-opened LibvirtConnection that
     /// points at the destination libvirtd).
@@ -3271,6 +3483,31 @@ mod preflight_tests {
         assert_eq!(redact_uri("qemu+ssh://alice@host/system"), "qemu+ssh://***@host/system");
         assert_eq!(redact_uri("qemu:///system"), "qemu:///system");
     }
+
+    #[test]
+    fn first_disk_source_skips_cdrom() {
+        let xml = r#"<domain><devices>
+  <disk type='file' device='cdrom'><source file='/iso/inst.iso'/><readonly/></disk>
+  <disk type='file' device='disk'><source file='/var/lib/libvirt/images/vm.qcow2'/></disk>
+</devices></domain>"#;
+        assert_eq!(first_disk_source(xml).as_deref(), Some("/var/lib/libvirt/images/vm.qcow2"));
+    }
+
+    #[test]
+    fn first_free_sd_slot_picks_unused_letter() {
+        let xml = "<domain><devices><disk><target dev='sda'/></disk><disk><target dev='sdb'/></disk></devices></domain>";
+        assert_eq!(first_free_sd_slot(xml), "sdc");
+    }
+
+    #[test]
+    fn inject_disk_lands_inside_devices_block() {
+        let xml = "<domain>\n  <devices>\n    <disk/>\n  </devices>\n</domain>";
+        let snippet = "<disk device='cdrom'/>";
+        let out = inject_disk_before_close(xml, snippet);
+        let inserted = out.find("<disk device='cdrom'").unwrap();
+        let close = out.find("</devices>").unwrap();
+        assert!(inserted < close);
+    }
 }
 
 
@@ -3290,6 +3527,58 @@ fn extract_attr_value(block: &str, tag: &str, attr: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Pull the first writable disk's source file path out of a domain XML.
+/// Skips read-only / cdrom devices.
+fn first_disk_source(xml: &str) -> Option<String> {
+    let mut rest = xml;
+    while let Some(i) = rest.find("<disk ") {
+        rest = &rest[i..];
+        let end = rest.find("</disk>").unwrap_or(rest.len());
+        let block = &rest[..end];
+        let cdrom = block.contains("device='cdrom'") || block.contains("device=\"cdrom\"");
+        let readonly = block.contains("<readonly/>");
+        if !cdrom && !readonly {
+            if let Some(p) = extract_attr_value(block, "source", "file")
+                .or_else(|| extract_attr_value(block, "source", "dev")) {
+                return Some(p);
+            }
+        }
+        rest = &rest[end..];
+    }
+    None
+}
+
+/// Find the first sd[a-z] target letter that's NOT already used by a
+/// disk/cdrom in `xml`. The seed ISO needs a unique slot. Falls back
+/// to "sdz" when somehow the entire alphabet is taken.
+fn first_free_sd_slot(xml: &str) -> String {
+    for c in b'a'..=b'z' {
+        let dev = format!("sd{}", c as char);
+        let needle1 = format!("dev='{dev}'");
+        let needle2 = format!("dev=\"{dev}\"");
+        if !xml.contains(&needle1) && !xml.contains(&needle2) {
+            return dev;
+        }
+    }
+    "sdz".to_string()
+}
+
+/// Splice an extra disk XML element into the `<devices>` block, just
+/// before its closing tag.
+fn inject_disk_before_close(xml: &str, disk_xml: &str) -> String {
+    let close = match xml.find("</devices>") {
+        Some(i) => i,
+        None => return xml.to_string(),
+    };
+    let mut out = String::with_capacity(xml.len() + disk_xml.len() + 4);
+    out.push_str(&xml[..close]);
+    out.push_str("    ");
+    out.push_str(disk_xml.trim_end_matches('\n'));
+    out.push('\n');
+    out.push_str(&xml[close..]);
+    out
 }
 
 fn detect_volume_format(vol: &virt::storage_vol::StorageVol) -> Option<String> {

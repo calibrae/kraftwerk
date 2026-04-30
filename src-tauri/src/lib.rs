@@ -27,6 +27,7 @@ use commands::host;
 use commands::snapshots as snap;
 use commands::launch_security as cmd_launch_sec;
 use commands::migration as cmd_migration;
+use commands::templates as cmd_templates;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -220,6 +221,9 @@ pub fn run() {
             cmd_migration::migrate_domain,
             cmd_migration::get_migration_status,
             cmd_migration::cancel_migration,
+            cmd_templates::set_template_flag,
+            cmd_templates::list_templates,
+            cmd_templates::clone_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

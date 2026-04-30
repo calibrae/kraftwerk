@@ -14,6 +14,7 @@ pub mod nested_virt;
 pub mod vtpm;
 pub mod launch_security;
 pub mod migration;
+pub mod templates;
 pub mod secrets;
 pub mod host_info;
 pub mod domain_caps;
