@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::libvirt::connection::LibvirtConnection;
@@ -15,10 +15,26 @@ use crate::models::state::ConnectionState;
 
 /// Global application state, managed by Tauri.
 ///
-/// Holds the libvirt connection, saved connections, per-connection state,
-/// and the active console session.
+/// Holds the libvirt connection pool, saved connections, per-connection
+/// state, and the active console / VNC / SPICE sessions.
+///
+/// The connection pool is keyed by `SavedConnection` UUID. Currently we
+/// keep "single active" UX semantics — connecting to a new id closes the
+/// prior — but the multi-entry pool is the foundation for live migration
+/// and side-by-side host views (phase 5.1).
 pub struct AppState {
-    libvirt: LibvirtConnection,
+    /// All currently-open libvirt connections, keyed by saved-connection
+    /// UUID. Each entry is shared via Arc so commands can hold references
+    /// across mutex releases.
+    connections: Mutex<HashMap<Uuid, Arc<LibvirtConnection>>>,
+    /// The id of the currently-active connection (the one returned by
+    /// `libvirt()`). `None` when nothing is connected.
+    active_id: Mutex<Option<Uuid>>,
+    /// A permanently-disconnected connection used as a fallback when
+    /// callers ask for `libvirt()` while nothing is active. Its methods
+    /// all return `NotConnected`. Avoids forcing every callsite to
+    /// handle an Option.
+    null_libvirt: Arc<LibvirtConnection>,
     saved_connections: Mutex<Vec<SavedConnection>>,
     connection_states: Mutex<HashMap<Uuid, ConnectionState>>,
     console: Mutex<Option<ConsoleSession>>,
@@ -35,7 +51,9 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            libvirt: LibvirtConnection::new(),
+            connections: Mutex::new(HashMap::new()),
+            active_id: Mutex::new(None),
+            null_libvirt: Arc::new(LibvirtConnection::new()),
             saved_connections: Mutex::new(Vec::new()),
             connection_states: Mutex::new(HashMap::new()),
             console: Mutex::new(None),
@@ -114,8 +132,77 @@ impl AppState {
         }
     }
 
-    pub fn libvirt(&self) -> &LibvirtConnection {
-        &self.libvirt
+    /// Get the active libvirt connection. Returns a no-op disconnected
+    /// connection (whose methods all return `NotConnected`) when no
+    /// connection is active — preserves the pre-pool callsite ergonomics.
+    pub fn libvirt(&self) -> Arc<LibvirtConnection> {
+        let active = *self.active_id.lock().unwrap();
+        if let Some(id) = active {
+            if let Some(c) = self.connections.lock().unwrap().get(&id) {
+                return Arc::clone(c);
+            }
+        }
+        Arc::clone(&self.null_libvirt)
+    }
+
+    /// Get a connection by id (whether or not it's the active one).
+    /// Used by migration commands that need to address source + target
+    /// simultaneously.
+    pub fn libvirt_for(&self, id: &Uuid) -> Option<Arc<LibvirtConnection>> {
+        self.connections.lock().unwrap().get(id).cloned()
+    }
+
+    /// Open a connection for the given id. If an entry already exists in
+    /// the pool, returns it (idempotent re-connect). Otherwise creates a
+    /// new LibvirtConnection, opens it against `uri`, and stores it.
+    /// Sets the active id on success.
+    pub fn open_connection(&self, id: Uuid, uri: &str) -> Result<Arc<LibvirtConnection>, VirtManagerError> {
+        let existing = self.connections.lock().unwrap().get(&id).cloned();
+        let conn = match existing {
+            Some(c) => c,
+            None => {
+                let c = Arc::new(LibvirtConnection::new());
+                c.open(uri)?;
+                self.connections.lock().unwrap().insert(id, Arc::clone(&c));
+                c
+            }
+        };
+        // Phase 5.1 step 1: keep single-active UX for now. A later step
+        // will let multiple ids stay open simultaneously without each
+        // connect() implicitly closing the prior.
+        let prior = {
+            let mut g = self.active_id.lock().unwrap();
+            let prev = g.replace(id);
+            prev
+        };
+        if let Some(prev) = prior {
+            if prev != id {
+                self.close_connection_internal(&prev);
+            }
+        }
+        Ok(conn)
+    }
+
+    /// Close a specific connection by id. If it was the active one,
+    /// clears `active_id`.
+    pub fn close_connection(&self, id: &Uuid) {
+        self.close_connection_internal(id);
+        let mut g = self.active_id.lock().unwrap();
+        if g.as_ref() == Some(id) {
+            *g = None;
+        }
+    }
+
+    fn close_connection_internal(&self, id: &Uuid) {
+        let removed = self.connections.lock().unwrap().remove(id);
+        if let Some(c) = removed {
+            c.close();
+        }
+    }
+
+    /// Currently-active connection id, if any.
+    pub fn active_connection_id(&self) -> Option<Uuid> {
+        *self.active_id.lock().unwrap()
     }
 
     // -- Saved connections --
@@ -214,7 +301,7 @@ impl AppState {
     where
         F: Fn(Vec<u8>) + Send + 'static,
     {
-        self.libvirt.with_console(domain_name, on_data)
+        self.libvirt().with_console(domain_name, on_data)
     }
 
     pub fn set_console(&self, session: ConsoleSession) {

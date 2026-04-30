@@ -76,8 +76,8 @@ pub fn connect(
 
     state.set_connection_state(&uuid, ConnectionState::Connecting);
 
-    match state.libvirt().open(&conn.uri) {
-        Ok(()) => {
+    match state.open_connection(uuid, &conn.uri) {
+        Ok(libvirt) => {
             state.set_current_uri(conn.uri.clone());
             state.set_connection_state(&uuid, ConnectionState::Connected);
             // Update last connected timestamp
@@ -87,7 +87,7 @@ pub fn connect(
                 .as_secs() as i64;
             state.update_last_connected(&uuid, now);
             // Return VM list immediately
-            state.libvirt().list_all_domains()
+            libvirt.list_all_domains()
         }
         Err(e) => {
             state.set_connection_state(&uuid, ConnectionState::Error(e.to_string()));
@@ -106,7 +106,7 @@ pub fn disconnect(
         id: id.clone(),
     })?;
     state.set_connection_state(&uuid, ConnectionState::Disconnecting);
-    state.libvirt().close();
+    state.close_connection(&uuid);
     state.clear_current_uri();
     state.set_connection_state(&uuid, ConnectionState::Disconnected);
     Ok(())
