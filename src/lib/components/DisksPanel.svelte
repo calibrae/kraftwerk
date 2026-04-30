@@ -13,6 +13,7 @@
    * when live hotplug is refused. We display the error if any.
    */
   import { invoke } from "@tauri-apps/api/core";
+  import BackingChainPanel from "./BackingChainPanel.svelte";
 
   let { vmName } = $props();
 
@@ -505,6 +506,8 @@
     </div>
   </div>
 {/if}
+
+<BackingChainPanel {vmName} />
 
 <style>
   .panel { display: flex; flex-direction: column; gap: 12px; }

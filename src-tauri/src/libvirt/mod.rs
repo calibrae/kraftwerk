@@ -9,6 +9,7 @@ pub mod memory_hotplug;
 pub mod clone;
 pub mod qemu_log;
 pub mod ssh_known_hosts;
+pub mod backing_chain;
 pub mod host_info;
 pub mod domain_caps;
 pub mod boot_config;

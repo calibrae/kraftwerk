@@ -1780,6 +1780,203 @@ impl LibvirtConnection {
         })
     }
 
+    /// Get the parsed backing chain (one entry per `<disk>`) for a domain.
+    /// Reads the inactive XML so chains reflect the persistent definition,
+    /// not what qemu happens to have open right now.
+    pub fn get_backing_chains(
+        &self,
+        name: &str,
+    ) -> Result<Vec<crate::libvirt::backing_chain::DiskBackingChain>, VirtManagerError> {
+        let xml = self.get_domain_xml(name, true)?;
+        Ok(crate::libvirt::backing_chain::parse_chains(&xml))
+    }
+
+    /// virDomainBlockPull — flatten an overlay onto the active disk
+    /// image. After completion, the chain is reduced to a single image.
+    /// Async: returns immediately; the job runs in the background and
+    /// progress is queried via `get_block_job_info`.
+    ///
+    /// `bandwidth` is bytes/sec (0 = unlimited). Pass
+    /// `flags = VIR_DOMAIN_BLOCK_PULL_BANDWIDTH_BYTES (64)` so libvirt
+    /// interprets `bandwidth` as bytes (legacy default is MiB/s).
+    pub fn block_pull(
+        &self,
+        name: &str,
+        disk: &str,
+        bandwidth: u64,
+    ) -> Result<(), VirtManagerError> {
+        use std::ffi::CString;
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let disk_c = CString::new(disk).map_err(|_| VirtManagerError::OperationFailed {
+                operation: "blockPull".into(),
+                reason: "disk name has nul byte".into(),
+            })?;
+            let r = unsafe {
+                virt_sys::virDomainBlockPull(
+                    domain.as_ptr(),
+                    disk_c.as_ptr(),
+                    bandwidth,
+                    64, // VIR_DOMAIN_BLOCK_PULL_BANDWIDTH_BYTES
+                )
+            };
+            if r < 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "blockPull".into(),
+                    reason: format!("virDomainBlockPull returned {r}"),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    /// virDomainBlockCommit — commit an overlay's contents into a lower
+    /// image in the chain. With `top` and `base` empty strings (passed
+    /// as null) libvirt commits the active overlay into the next-below
+    /// backing image. Pass `delete_after = true` to set
+    /// `VIR_DOMAIN_BLOCK_COMMIT_DELETE` so libvirt unlinks the now-empty
+    /// top image when the job finishes (still requires the file to be
+    /// inside a libvirt-managed pool).
+    ///
+    /// `active = true` means commit the currently-running overlay (the
+    /// `<source>` itself); requires `VIR_DOMAIN_BLOCK_COMMIT_ACTIVE = 4`
+    /// and a follow-up `block_job_abort(pivot=true)` to swap pointers.
+    pub fn block_commit(
+        &self,
+        name: &str,
+        disk: &str,
+        top: Option<&str>,
+        base: Option<&str>,
+        bandwidth: u64,
+        active: bool,
+        delete_after: bool,
+    ) -> Result<(), VirtManagerError> {
+        use std::ffi::CString;
+        let mut flags: u32 = 16; // VIR_DOMAIN_BLOCK_COMMIT_BANDWIDTH_BYTES
+        if active { flags |= 4; }
+        if delete_after { flags |= 2; }
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let disk_c = CString::new(disk).map_err(|_| VirtManagerError::OperationFailed {
+                operation: "blockCommit".into(),
+                reason: "disk name has nul byte".into(),
+            })?;
+            let top_c = top
+                .map(|s| CString::new(s))
+                .transpose()
+                .map_err(|_| VirtManagerError::OperationFailed {
+                    operation: "blockCommit".into(),
+                    reason: "top has nul byte".into(),
+                })?;
+            let base_c = base
+                .map(|s| CString::new(s))
+                .transpose()
+                .map_err(|_| VirtManagerError::OperationFailed {
+                    operation: "blockCommit".into(),
+                    reason: "base has nul byte".into(),
+                })?;
+            let r = unsafe {
+                virt_sys::virDomainBlockCommit(
+                    domain.as_ptr(),
+                    disk_c.as_ptr(),
+                    base_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                    top_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                    bandwidth,
+                    flags,
+                )
+            };
+            if r < 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "blockCommit".into(),
+                    reason: format!("virDomainBlockCommit returned {r}"),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    /// Poll the running block job for `disk`. Returns None when no job
+    /// is in flight. Caller can divide `cur` / `end` for a 0..1 progress
+    /// fraction.
+    pub fn get_block_job_info(
+        &self,
+        name: &str,
+        disk: &str,
+    ) -> Result<Option<crate::libvirt::backing_chain::BlockJobInfo>, VirtManagerError> {
+        use std::ffi::CString;
+        use std::mem::MaybeUninit;
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let disk_c = CString::new(disk).map_err(|_| VirtManagerError::OperationFailed {
+                operation: "blockJobInfo".into(),
+                reason: "disk name has nul byte".into(),
+            })?;
+            let mut info: MaybeUninit<virt_sys::virDomainBlockJobInfo> = MaybeUninit::zeroed();
+            let r = unsafe {
+                virt_sys::virDomainGetBlockJobInfo(
+                    domain.as_ptr(),
+                    disk_c.as_ptr(),
+                    info.as_mut_ptr(),
+                    0,
+                )
+            };
+            match r {
+                0 => Ok(None),               // no active job
+                1 => {
+                    let info = unsafe { info.assume_init() };
+                    let kind = match info.type_ {
+                        1 => "pull",
+                        2 => "copy",
+                        3 => "commit",
+                        4 => "active_commit",
+                        5 => "backup",
+                        _ => "unknown",
+                    };
+                    Ok(Some(crate::libvirt::backing_chain::BlockJobInfo {
+                        kind: kind.to_string(),
+                        bandwidth: info.bandwidth as u64,
+                        cur: info.cur as u64,
+                        end: info.end as u64,
+                    }))
+                }
+                _ => Err(VirtManagerError::OperationFailed {
+                    operation: "blockJobInfo".into(),
+                    reason: format!("virDomainGetBlockJobInfo returned {r}"),
+                }),
+            }
+        })
+    }
+
+    /// virDomainBlockJobAbort. With `pivot = true` and an active commit,
+    /// swaps the live image pointer to the lower base — required to
+    /// finalise an active commit job.
+    pub fn block_job_abort(
+        &self,
+        name: &str,
+        disk: &str,
+        pivot: bool,
+    ) -> Result<(), VirtManagerError> {
+        use std::ffi::CString;
+        let flags: u32 = if pivot { 2 } else { 0 }; // VIR_DOMAIN_BLOCK_JOB_ABORT_PIVOT
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            let disk_c = CString::new(disk).map_err(|_| VirtManagerError::OperationFailed {
+                operation: "blockJobAbort".into(),
+                reason: "disk name has nul byte".into(),
+            })?;
+            let r = unsafe {
+                virt_sys::virDomainBlockJobAbort(domain.as_ptr(), disk_c.as_ptr(), flags)
+            };
+            if r < 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "blockJobAbort".into(),
+                    reason: format!("virDomainBlockJobAbort returned {r}"),
+                });
+            }
+            Ok(())
+        })
+    }
+
     // -- Network Management --
 
     /// List all virtual networks on the hypervisor.

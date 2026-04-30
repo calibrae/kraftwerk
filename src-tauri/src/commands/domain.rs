@@ -254,3 +254,68 @@ pub fn screenshot_domain(
     let (mime, bytes) = state.libvirt().screenshot(&name, screen)?;
     Ok((mime, STANDARD.encode(bytes)))
 }
+
+// -- Backing chain (qcow2 overlays) --
+
+#[tauri::command]
+pub fn get_backing_chains(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<crate::libvirt::backing_chain::DiskBackingChain>, VirtManagerError> {
+    state.libvirt().get_backing_chains(&name)
+}
+
+/// Flatten an overlay onto its disk image. Async — poll get_block_job
+/// for progress.
+#[tauri::command]
+pub fn block_pull(
+    state: State<'_, AppState>,
+    name: String,
+    disk: String,
+    bandwidth_bps: u64,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().block_pull(&name, &disk, bandwidth_bps)
+}
+
+/// Commit an overlay back into its parent. With `top` and `base` empty
+/// strings the active overlay is committed into its immediate parent.
+#[tauri::command]
+pub fn block_commit(
+    state: State<'_, AppState>,
+    name: String,
+    disk: String,
+    top: Option<String>,
+    base: Option<String>,
+    bandwidth_bps: u64,
+    active: bool,
+    delete_after: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().block_commit(
+        &name,
+        &disk,
+        top.as_deref().filter(|s| !s.is_empty()),
+        base.as_deref().filter(|s| !s.is_empty()),
+        bandwidth_bps,
+        active,
+        delete_after,
+    )
+}
+
+#[tauri::command]
+pub fn get_block_job(
+    state: State<'_, AppState>,
+    name: String,
+    disk: String,
+) -> Result<Option<crate::libvirt::backing_chain::BlockJobInfo>, VirtManagerError> {
+    state.libvirt().get_block_job_info(&name, &disk)
+}
+
+#[tauri::command]
+pub fn block_job_abort(
+    state: State<'_, AppState>,
+    name: String,
+    disk: String,
+    pivot: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().block_job_abort(&name, &disk, pivot)
+}
