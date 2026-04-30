@@ -217,16 +217,32 @@ fn handle_volume_text(cfg: &mut VolumeConfig, path: &[String], text: &str) {
 #[derive(Debug, Clone, Default)]
 pub struct PoolBuildParams<'a> {
     pub name: &'a str,
-    /// "dir" | "netfs" | "logical" | "iscsi"
+    /// "dir" | "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd"
     pub pool_type: &'a str,
     /// Target path on host (used by `dir` and `netfs` as the mount point).
     pub target_path: Option<&'a str>,
-    /// For netfs: NFS server hostname.
+    /// For netfs: NFS server hostname. For RBD: monitor host(s).
     pub source_host: Option<&'a str>,
-    /// For netfs: exported dir on the server, or iSCSI target path.
+    /// For netfs: exported dir on the server. For iSCSI: target path.
     pub source_dir: Option<&'a str>,
-    /// For logical: VG name. For iscsi: target IQN.
+    /// For logical: VG name. For iscsi: target IQN. For RBD: pool name.
     pub source_name: Option<&'a str>,
+    /// Authentication block for iSCSI (CHAP) and RBD (Ceph). None for
+    /// pool types that don't take auth.
+    pub auth: Option<PoolAuthParams<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PoolAuthParams<'a> {
+    /// "chap" | "ceph"
+    pub auth_type: &'a str,
+    pub username: &'a str,
+    /// UUID of the libvirt secret holding the password / CephX key.
+    pub secret_uuid: &'a str,
+    /// libvirt's `<secret usage='...'>` value. For iSCSI CHAP this is
+    /// commonly the target IQN; for Ceph it's the user name. Optional —
+    /// when None we reference by UUID only.
+    pub secret_usage: Option<&'a str>,
 }
 
 pub fn build_pool_xml(p: &PoolBuildParams) -> String {
@@ -235,7 +251,10 @@ pub fn build_pool_xml(p: &PoolBuildParams) -> String {
     xml.push_str(&format!("  <name>{}</name>\n", escape_xml(p.name)));
 
     // Source section — only for types that need it
-    let needs_source = matches!(t, "netfs" | "logical" | "iscsi");
+    let needs_source = matches!(
+        t,
+        "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd"
+    );
     if needs_source {
         xml.push_str("  <source>\n");
         if let Some(h) = p.source_host {
@@ -252,6 +271,24 @@ pub fn build_pool_xml(p: &PoolBuildParams) -> String {
             if !n.is_empty() {
                 xml.push_str(&format!("    <name>{}</name>\n", escape_xml(n)));
             }
+        }
+        if let Some(a) = &p.auth {
+            xml.push_str(&format!(
+                "    <auth type='{}' username='{}'>\n",
+                escape_xml(a.auth_type),
+                escape_xml(a.username),
+            ));
+            match a.secret_usage {
+                Some(usage) if !usage.is_empty() => xml.push_str(&format!(
+                    "      <secret usage='{}'/>\n",
+                    escape_xml(usage),
+                )),
+                _ => xml.push_str(&format!(
+                    "      <secret uuid='{}'/>\n",
+                    escape_xml(a.secret_uuid),
+                )),
+            }
+            xml.push_str("    </auth>\n");
         }
         xml.push_str("  </source>\n");
     }
@@ -438,6 +475,7 @@ mod tests {
             source_host: None,
             source_dir: None,
             source_name: None,
+            auth: None,
         });
         assert!(xml.contains("<pool type='dir'>"));
         assert!(xml.contains("<name>test</name>"));
@@ -454,6 +492,7 @@ mod tests {
             source_host: Some("nas.lan"),
             source_dir: Some("/export/vm"),
             source_name: None,
+            auth: None,
         });
         assert!(xml.contains("<pool type='netfs'>"));
         assert!(xml.contains("<host name='nas.lan'/>"));
@@ -470,6 +509,7 @@ mod tests {
             source_host: None,
             source_dir: None,
             source_name: Some("my-vg"),
+            auth: None,
         });
         assert!(xml.contains("<pool type='logical'>"));
         assert!(xml.contains("<name>my-vg</name>"));
@@ -484,6 +524,7 @@ mod tests {
             source_host: None,
             source_dir: None,
             source_name: None,
+            auth: None,
         });
         assert!(!xml.contains("<x"));
         assert!(!xml.contains("<inject>"));
@@ -498,6 +539,7 @@ mod tests {
             source_host: None,
             source_dir: None,
             source_name: None,
+            auth: None,
         });
         let p = parse_pool(&xml).unwrap();
         assert_eq!(p.name, "rt");
@@ -553,5 +595,61 @@ mod tests {
     #[test]
     fn invalid_volume_xml_errors() {
         assert!(parse_volume("<not-xml").is_err());
+    }
+
+    #[test]
+    fn iscsi_pool_with_chap_auth() {
+        let xml = build_pool_xml(&PoolBuildParams {
+            name: "iscsi-pool",
+            pool_type: "iscsi",
+            target_path: Some("/dev/disk/by-path"),
+            source_host: Some("iscsi.example.com"),
+            source_dir: None,
+            source_name: Some("iqn.2024-01.example:target"),
+            auth: Some(PoolAuthParams {
+                auth_type: "chap",
+                username: "iscsi-user",
+                secret_uuid: "11111111-2222-3333-4444-555555555555",
+                secret_usage: Some("iqn.2024-01.example:target"),
+            }),
+        });
+        assert!(xml.contains("<pool type='iscsi'>"));
+        assert!(xml.contains("<auth type='chap' username='iscsi-user'>"));
+        assert!(xml.contains("<secret usage='iqn.2024-01.example:target'/>"));
+    }
+
+    #[test]
+    fn rbd_pool_with_ceph_auth_by_uuid() {
+        let xml = build_pool_xml(&PoolBuildParams {
+            name: "rbd-pool",
+            pool_type: "rbd",
+            target_path: None,
+            source_host: Some("ceph-mon.example"),
+            source_dir: None,
+            source_name: Some("libvirt-pool"),
+            auth: Some(PoolAuthParams {
+                auth_type: "ceph",
+                username: "libvirt",
+                secret_uuid: "deadbeef-0000-0000-0000-000000000001",
+                secret_usage: None,
+            }),
+        });
+        assert!(xml.contains("<pool type='rbd'>"));
+        assert!(xml.contains("<auth type='ceph' username='libvirt'>"));
+        assert!(xml.contains("<secret uuid='deadbeef-0000-0000-0000-000000000001'/>"));
+    }
+
+    #[test]
+    fn no_auth_block_when_unset() {
+        let xml = build_pool_xml(&PoolBuildParams {
+            name: "p",
+            pool_type: "iscsi",
+            target_path: Some("/dev/disk/by-path"),
+            source_host: Some("h"),
+            source_dir: None,
+            source_name: Some("iqn"),
+            auth: None,
+        });
+        assert!(!xml.contains("<auth"));
     }
 }

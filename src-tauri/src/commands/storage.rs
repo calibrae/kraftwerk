@@ -9,18 +9,29 @@ use crate::models::storage::{StoragePoolInfo, StorageVolumeInfo};
 #[derive(Debug, Deserialize)]
 pub struct CreatePoolRequest {
     pub name: String,
-    /// "dir" | "netfs" | "logical" | "iscsi"
+    /// "dir" | "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd"
     pub pool_type: String,
     pub target_path: Option<String>,
     pub source_host: Option<String>,
     pub source_dir: Option<String>,
     pub source_name: Option<String>,
+    /// Optional auth for iSCSI (CHAP) and RBD (Ceph).
+    pub auth: Option<PoolAuthRequest>,
     #[serde(default = "default_true")]
     pub build: bool,
     #[serde(default = "default_true")]
     pub start: bool,
     #[serde(default)]
     pub autostart: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PoolAuthRequest {
+    /// "chap" for iSCSI, "ceph" for RBD.
+    pub auth_type: String,
+    pub username: String,
+    pub secret_uuid: String,
+    pub secret_usage: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +120,12 @@ pub fn create_pool(
     state: State<'_, AppState>,
     req: CreatePoolRequest,
 ) -> Result<(), VirtManagerError> {
+    let auth = req.auth.as_ref().map(|a| crate::libvirt::storage_config::PoolAuthParams {
+        auth_type: &a.auth_type,
+        username: &a.username,
+        secret_uuid: &a.secret_uuid,
+        secret_usage: a.secret_usage.as_deref(),
+    });
     let xml = storage_config::build_pool_xml(&PoolBuildParams {
         name: &req.name,
         pool_type: &req.pool_type,
@@ -116,6 +133,7 @@ pub fn create_pool(
         source_host: req.source_host.as_deref(),
         source_dir: req.source_dir.as_deref(),
         source_name: req.source_name.as_deref(),
+        auth,
     });
     state.libvirt().define_pool(&xml, req.build, req.start)?;
     if req.autostart {

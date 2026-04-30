@@ -3,11 +3,13 @@
 
   let { open = $bindable(false) } = $props();
 
+  import { invoke } from "@tauri-apps/api/core";
   const TYPES = [
     { id: "dir",     label: "Directory",    desc: "Local filesystem folder (simplest, most common)" },
     { id: "netfs",   label: "NFS Mount",    desc: "Mount a remote NFS export" },
     { id: "logical", label: "LVM Volume Group", desc: "Existing LVM volume group on the host" },
     { id: "iscsi",   label: "iSCSI",        desc: "Remote iSCSI target" },
+    { id: "rbd",     label: "Ceph / RBD",   desc: "RADOS Block Device pool on a Ceph cluster" },
   ];
 
   let poolType = $state("dir");
@@ -21,10 +23,20 @@
   let busy = $state(false);
   let err = $state(null);
 
+  // Auth section — surfaced for iSCSI (CHAP) and RBD (Ceph).
+  let authEnabled = $state(false);
+  let authUsername = $state("");
+  let authPassphrase = $state("");
+  let authSecretUuid = $state("");
+  let authMode = $state("create"); // "create" | "existing"
+
   // Which extra fields to show per pool type
-  let showSourceHost = $derived(poolType === "netfs" || poolType === "iscsi");
+  let showSourceHost = $derived(poolType === "netfs" || poolType === "iscsi" || poolType === "rbd");
   let showSourceDir = $derived(poolType === "netfs" || poolType === "iscsi");
-  let showSourceName = $derived(poolType === "logical");
+  let showSourceName = $derived(poolType === "logical" || poolType === "rbd");
+  let showAuth = $derived(poolType === "iscsi" || poolType === "rbd");
+  let authType = $derived(poolType === "rbd" ? "ceph" : "chap");
+  let secretUsageType = $derived(poolType === "rbd" ? "ceph" : "iscsi");
   let targetHelp = $derived(
     poolType === "dir" ? "Directory will be created if it doesn't exist." :
     poolType === "netfs" ? "Local mount point where the NFS share will be mounted." :
@@ -36,6 +48,8 @@
     poolType = "dir"; name = "";
     targetPath = "/var/lib/libvirt/images/my-pool";
     sourceHost = ""; sourceDir = ""; sourceName = "";
+    authEnabled = false; authUsername = ""; authPassphrase = "";
+    authSecretUuid = ""; authMode = "create";
     startNow = true; autostart = false;
     busy = false; err = null;
   }
@@ -47,6 +61,38 @@
     if (!name.trim()) return;
     busy = true; err = null;
     try {
+      let auth = null;
+      if (showAuth && authEnabled) {
+        if (!authUsername.trim()) {
+          throw new Error("Auth username required");
+        }
+        let uuid = authSecretUuid.trim();
+        if (authMode === "create") {
+          if (!authPassphrase) throw new Error("Passphrase required to create a new secret");
+          uuid = await invoke("define_secret", {
+            req: {
+              usage: secretUsageType,
+              usage_id: secretUsageType === "iscsi"
+                ? (sourceDir.trim() || null)
+                : (authUsername.trim() || null),
+              description: `${authType} auth for pool ${name.trim()}`,
+              ephemeral: false,
+              private: true,
+              value: authPassphrase,
+            },
+          });
+        }
+        if (!uuid) throw new Error("Existing secret UUID required");
+        auth = {
+          auth_type: authType,
+          username: authUsername.trim(),
+          secret_uuid: uuid,
+          secret_usage: secretUsageType === "iscsi"
+            ? (sourceDir.trim() || null)
+            : null,
+        };
+      }
+
       await createPool({
         name: name.trim(),
         pool_type: poolType,
@@ -54,6 +100,7 @@
         source_host: showSourceHost ? (sourceHost.trim() || null) : null,
         source_dir: showSourceDir ? (sourceDir.trim() || null) : null,
         source_name: showSourceName ? (sourceName.trim() || null) : null,
+        auth,
         build: true,
         start: startNow,
         autostart,
@@ -112,9 +159,47 @@
 
         {#if showSourceName}
           <label>
-            <span>Volume Group Name</span>
-            <input bind:value={sourceName} placeholder="my-vg" />
+            <span>{poolType === "rbd" ? "Ceph Pool Name" : "Volume Group Name"}</span>
+            <input bind:value={sourceName} placeholder={poolType === "rbd" ? "libvirt-pool" : "my-vg"} />
           </label>
+        {/if}
+
+        {#if showAuth}
+          <fieldset>
+            <legend>Authentication</legend>
+            <label class="toggle">
+              <input type="checkbox" bind:checked={authEnabled} />
+              <span>Enable {poolType === "rbd" ? "Ceph (cephx)" : "CHAP"} authentication</span>
+            </label>
+            {#if authEnabled}
+              <label>
+                <span>Username</span>
+                <input bind:value={authUsername} placeholder={poolType === "rbd" ? "libvirt" : "iscsi-user"} />
+              </label>
+              <div class="auth-mode">
+                <label class="radio">
+                  <input type="radio" name="authmode" value="create" bind:group={authMode} />
+                  <span>Create new secret</span>
+                </label>
+                <label class="radio">
+                  <input type="radio" name="authmode" value="existing" bind:group={authMode} />
+                  <span>Use existing secret UUID</span>
+                </label>
+              </div>
+              {#if authMode === "create"}
+                <label>
+                  <span>{poolType === "rbd" ? "CephX key" : "CHAP password"}</span>
+                  <input type="password" bind:value={authPassphrase} placeholder="paste here" />
+                </label>
+                <small class="hint">A new libvirt secret will be created with this value, then referenced by the pool. The secret is private (not readable back via API).</small>
+              {:else}
+                <label>
+                  <span>Secret UUID</span>
+                  <input bind:value={authSecretUuid} placeholder="00000000-0000-0000-0000-000000000000" />
+                </label>
+              {/if}
+            {/if}
+          </fieldset>
         {/if}
 
         <div class="flags">
@@ -178,6 +263,16 @@
   .toggle span { text-transform: none; letter-spacing: normal; color: var(--text); font-size: 13px; font-weight: 400; }
 
   .flags { display: flex; gap: 20px; padding-top: 4px; }
+
+  .auth-mode { display: flex; gap: 16px; padding: 4px 0; }
+  .radio { flex-direction: row; align-items: center; gap: 6px; cursor: pointer; }
+  .radio input { margin: 0; }
+  .radio span { text-transform: none; letter-spacing: normal; color: var(--text); font-size: 12px; font-weight: 400; }
+  input[type="password"] {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-input); color: var(--text); font-size: 13px; font-family: inherit; outline: none;
+  }
+  input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
   .error { padding: 8px 12px; background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; color: #ef4444; font-size: 12px; }
