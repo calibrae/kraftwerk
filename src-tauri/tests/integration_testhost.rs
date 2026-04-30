@@ -588,6 +588,7 @@ fn test_create_dir_pool_lifecycle() {
         source_host: None,
         source_dir: None,
         source_name: None,
+        auth: None,
     });
 
     conn.define_pool(&xml, true, true).expect("define_pool");
@@ -625,6 +626,7 @@ fn test_create_and_delete_volume() {
         source_host: None,
         source_dir: None,
         source_name: None,
+        auth: None,
     });
     conn.define_pool(&pool_xml, true, true).unwrap();
 
@@ -673,6 +675,7 @@ fn test_pool_autostart_toggle() {
         source_host: None,
         source_dir: None,
         source_name: None,
+        auth: None,
     });
     conn.define_pool(&xml, true, true).unwrap();
 

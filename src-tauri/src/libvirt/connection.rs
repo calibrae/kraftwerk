@@ -2048,12 +2048,6 @@ impl LibvirtConnection {
                             reason: e.to_string(),
                         }
                     })?;
-                    if written < 0 {
-                        return Err(VirtManagerError::OperationFailed {
-                            operation: "streamSend".into(),
-                            reason: format!("negative return {written}"),
-                        });
-                    }
                     offset += written as usize;
                 }
                 sent += n as u64;
