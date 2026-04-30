@@ -53,9 +53,13 @@ pub fn parse_host_vendor(caps_xml: &str) -> CpuVendor {
         let after = &caps_xml[start + "<vendor>".len()..];
         if let Some(end) = after.find("</vendor>") {
             let v = after[..end].trim();
+            // libvirt's host caps emits the friendly form ("Intel" / "AMD")
+            // under <host><cpu><vendor>; the cpuid form ("GenuineIntel" /
+            // "AuthenticAMD") shows up in some other contexts (qemu CPU
+            // model dumps). Accept both.
             return match v {
-                "GenuineIntel" => CpuVendor::Intel,
-                "AuthenticAMD" => CpuVendor::Amd,
+                "Intel" | "GenuineIntel" => CpuVendor::Intel,
+                "AMD" | "AuthenticAMD" => CpuVendor::Amd,
                 _ => CpuVendor::Unknown,
             };
         }
@@ -124,6 +128,13 @@ mod tests {
     fn extracts_amd_vendor() {
         let caps = "<host><cpu><vendor>AuthenticAMD</vendor></cpu></host>";
         assert_eq!(parse_host_vendor(caps), CpuVendor::Amd);
+    }
+
+    #[test]
+    fn extracts_friendly_vendor_names() {
+        // libvirt's host capabilities emits the short form by default.
+        assert_eq!(parse_host_vendor("<host><cpu><vendor>Intel</vendor></cpu></host>"), CpuVendor::Intel);
+        assert_eq!(parse_host_vendor("<host><cpu><vendor>AMD</vendor></cpu></host>"), CpuVendor::Amd);
     }
 
     #[test]

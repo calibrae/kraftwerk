@@ -2176,6 +2176,13 @@ impl LibvirtConnection {
 
     /// Get the XML for a named network.
     pub fn get_network_xml(&self, name: &str) -> Result<String, VirtManagerError> {
+        // VIR_NETWORK_XML_INACTIVE=1 — return the persistent definition,
+        // not the running snapshot. We want the editor to reflect what
+        // the operator just modified (routes, DHCP host entries) even
+        // for sections that don't propagate to live state until restart.
+        // Live runtime state (active leases, autogen MAC) is not surfaced
+        // by kraftwerk anyway.
+        const VIR_NETWORK_XML_INACTIVE: u32 = 1;
         self.with_connection(|conn| {
             let net = Network::lookup_by_name(conn, name).map_err(|_| {
                 VirtManagerError::OperationFailed {
@@ -2183,7 +2190,7 @@ impl LibvirtConnection {
                     reason: format!("network '{name}' not found"),
                 }
             })?;
-            net.get_xml_desc(0).map_err(|e| VirtManagerError::OperationFailed {
+            net.get_xml_desc(VIR_NETWORK_XML_INACTIVE).map_err(|e| VirtManagerError::OperationFailed {
                 operation: "getNetworkXML".into(),
                 reason: e.to_string(),
             })
