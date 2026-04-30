@@ -21,9 +21,10 @@ Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
 
 ## Status
 
-Working daily driver against a real KVM host. **435 unit tests + 22
+Working daily driver against a real KVM host. **456 unit tests + 26
 integration tests** against live hypervisors (per-domain + memory +
-vCPU + networking + phase-5 advanced devices + live migration), all green.
+vCPU + networking + advanced devices + live migration + templates +
+cloud image catalog + OVA import), all green.
 
 Feature parity snapshot with Python virt-manager:
 
@@ -75,11 +76,13 @@ Feature parity snapshot with Python virt-manager:
 | Nested virtualization toggle (Intel vmx / AMD svm + host kernel module probe) | ✅ |
 | SEV / SEV-SNP / TDX launch security | ✅ (SEV writable, SEV-SNP/TDX read-only) |
 | vTPM persistent NVRAM path + backup snippets | ✅ |
-| OVA / OVF import | 🚧 phase 6 |
+| VM templates (libvirt metadata flag) + clone-from-template with cloud-init NoCloud seed (host-side mkisofs) | ✅ |
+| Cloud image catalog (Fedora / Debian / Ubuntu / Alpine) — one-click download into a pool via SSH+curl | ✅ |
+| OVA / OVF import (VMDK → qcow2 streaming via `qemu-img convert` over SSH stdin) | ✅ |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the multi-phase plan
 beyond per-domain config (events, snapshots, raw XML, hotplug were
-phases 1 + 2 + 3 + 4 + 5 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
+phases 1 + 2 + 3 + 4 + 5 + 6 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
 for the full surface inventory with constraints and test expectations.
 
 ## Running it
