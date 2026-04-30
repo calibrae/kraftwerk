@@ -8,6 +8,7 @@
   import HypervisorDashboard from "./HypervisorDashboard.svelte";
   import BulkVmActions from "./BulkVmActions.svelte";
   import CloneVmDialog from "./CloneVmDialog.svelte";
+  import MigrateVmDialog from "./MigrateVmDialog.svelte";
   import VmConfigPanel from "./VmConfigPanel.svelte";
   import HardwarePanel from "./HardwarePanel.svelte";
   import BootPanel from "./BootPanel.svelte";
@@ -35,6 +36,7 @@
   let showSpice = $state(false);
   let activeTab = $state("overview"); // "overview" | "config"
   let showClone = $state(false);
+  let showMigrate = $state(false);
   let savedState = $state(false);  // domain has managed-save pending
   let screenshotData = $state(null); // { mime, data_base64 } when open
   let coreDumpPath = $state("");
@@ -215,6 +217,7 @@
         {#if vm.state === "running"}
           <button class="btn-action" onclick={doScreenshot}>Screenshot</button>
           <button class="btn-action" onclick={doCoreDump}>Core dump</button>
+          <button class="btn-action" onclick={() => showMigrate = true}>Migrate</button>
         {/if}
         {#if vm.state === "shut_off"}
           <button class="btn-action" onclick={() => showClone = true}>Clone</button>
@@ -303,6 +306,7 @@
     </div>
   {/if}
   <CloneVmDialog bind:open={showClone} source={appState.selectedVm} />
+  <MigrateVmDialog bind:open={showMigrate} vmName={vm?.name} sourceConnectionId={appState.selectedConnectionId} />
   {#if screenshotData}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="ss-backdrop" onclick={() => screenshotData = null} role="dialog" aria-modal="true">
