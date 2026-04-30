@@ -98,6 +98,25 @@ export async function removeConnection(id) {
   }
 }
 
+/**
+ * Pull host + port out of a `qemu+ssh://[user@]host[:port]/system` URI.
+ * Returns null for non-ssh URIs (where there is no host key to check).
+ */
+export function parseSshHost(uri) {
+  if (!uri || typeof uri !== "string") return null;
+  const prefix = "qemu+ssh://";
+  if (!uri.startsWith(prefix)) return null;
+  const rest = uri.slice(prefix.length);
+  const authority = rest.split("/")[0] || "";
+  const at = authority.lastIndexOf("@");
+  const hostPart = at >= 0 ? authority.slice(at + 1) : authority;
+  const colon = hostPart.lastIndexOf(":");
+  if (colon < 0) return { host: hostPart, port: 22 };
+  const host = hostPart.slice(0, colon);
+  const port = parseInt(hostPart.slice(colon + 1), 10) || 22;
+  return { host, port };
+}
+
 export async function connect(id) {
   try {
     error = null;

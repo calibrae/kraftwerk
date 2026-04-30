@@ -1,7 +1,7 @@
 <script>
   import { getState, connect, disconnect, selectVm, removeConnection, refreshVms } from "$lib/stores/app.svelte.js";
 
-  let { onAddConnection = () => {}, onEditConnection = () => {} } = $props();
+  let { onAddConnection = () => {}, onEditConnection = () => {}, onConnect = null } = $props();
   const appState = getState();
 
   const stateColors = {
@@ -46,7 +46,8 @@
   }
 
   async function handleConnect(id) {
-    await connect(id);
+    if (onConnect) await onConnect(id);
+    else await connect(id);
   }
 
   async function handleDisconnect(id) {

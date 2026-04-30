@@ -4,15 +4,60 @@
   import VmDetail from "$lib/components/VmDetail.svelte";
   import NetworksView from "$lib/components/NetworksView.svelte";
   import ConnectionDialog from "$lib/components/ConnectionDialog.svelte";
+  import HostKeyDialog from "$lib/components/HostKeyDialog.svelte";
   import CreateNetworkDialog from "$lib/components/CreateNetworkDialog.svelte";
   import StorageView from "$lib/components/StorageView.svelte";
   import CreatePoolDialog from "$lib/components/CreatePoolDialog.svelte";
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import VmWizard from "$lib/components/VmWizard.svelte";
-  import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents } from "$lib/stores/app.svelte.js";
+  import { invoke } from "@tauri-apps/api/core";
+  import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
   let showConnectionDialog = $state(false);
+  let hostKeyDialogOpen = $state(false);
+  let hostKeyInfo = $state(null);
+  let pendingConnId = $state(null);
+
+  /**
+   * Wraps the raw store.connect() call with a TOFU host-key probe.
+   * Trusted -> proceed; New / Changed -> dialog; Unreachable -> just
+   * try to connect (libvirt will surface the network error itself).
+   */
+  async function hostKeyConnect(id) {
+    const conn = appState.savedConnections.find(c => c.id === id);
+    if (!conn) return connect(id);
+    const target = parseSshHost(conn.uri);
+    if (!target) return connect(id);
+    try {
+      const info = await invoke("check_host_key", { host: target.host, port: target.port });
+      if (info.status === "trusted" || info.status === "unreachable") {
+        return connect(id);
+      }
+      hostKeyInfo = info;
+      pendingConnId = id;
+      hostKeyDialogOpen = true;
+    } catch (e) {
+      // If the probe itself errors, fall through to connect — libvirt
+      // will give a clearer error than us swallowing it here.
+      console.warn("host key probe failed", e);
+      return connect(id);
+    }
+  }
+
+  function onHostKeyAccepted() {
+    if (pendingConnId) {
+      const id = pendingConnId;
+      pendingConnId = null;
+      hostKeyInfo = null;
+      connect(id);
+    }
+  }
+  function onHostKeyCancelled() {
+    pendingConnId = null;
+    hostKeyInfo = null;
+  }
+
   let editingConnection = $state(null);
   let showNetworkDialog = $state(false);
   let showPoolDialog = $state(false);
@@ -32,6 +77,7 @@
   <Sidebar
     onAddConnection={() => { editingConnection = null; showConnectionDialog = true; }}
     onEditConnection={(conn) => { editingConnection = conn; showConnectionDialog = true; }}
+    onConnect={hostKeyConnect}
   />
 
   <main class="main-area">
@@ -66,6 +112,7 @@
 </div>
 
 <ConnectionDialog bind:open={showConnectionDialog} bind:editing={editingConnection} />
+<HostKeyDialog bind:open={hostKeyDialogOpen} info={hostKeyInfo} onAccept={onHostKeyAccepted} onCancel={onHostKeyCancelled} />
 <CreateNetworkDialog bind:open={showNetworkDialog} />
 <CreatePoolDialog bind:open={showPoolDialog} />
 <CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />

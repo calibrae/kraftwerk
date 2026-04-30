@@ -123,3 +123,33 @@ pub fn get_connection_state(
     })?;
     Ok(state.get_connection_state(&uuid))
 }
+
+/// Probe a host's SSH key and compare against the local known_hosts.
+/// Used by the connect flow to surface a TOFU prompt before handing
+/// off to libvirt's ssh (which has no TTY for the standard prompt).
+#[tauri::command]
+pub fn check_host_key(
+    host: String,
+    port: Option<u16>,
+) -> Result<crate::libvirt::ssh_known_hosts::HostKeyInfo, VirtManagerError> {
+    crate::libvirt::ssh_known_hosts::check_host_key(&host, port.unwrap_or(22))
+}
+
+/// Append a verbatim ssh-keyscan line to ~/.ssh/known_hosts. The line
+/// MUST come from the previous check_host_key result — rejecting
+/// multi-line input is a defense against a hostile webview snippet
+/// trying to splice extra entries in.
+#[tauri::command]
+pub fn accept_host_key(keyscan_line: String) -> Result<(), VirtManagerError> {
+    crate::libvirt::ssh_known_hosts::append_host_key(&keyscan_line)
+}
+
+/// Remove all known_hosts entries for host[:port]. Required before
+/// re-trusting a Changed-status host (otherwise libvirt's ssh refuses).
+#[tauri::command]
+pub fn forget_host_key(
+    host: String,
+    port: Option<u16>,
+) -> Result<(), VirtManagerError> {
+    crate::libvirt::ssh_known_hosts::forget_host_key(&host, port.unwrap_or(22))
+}
