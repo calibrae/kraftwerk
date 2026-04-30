@@ -11,9 +11,11 @@
     busy = true;
     err = null;
     try {
-      if (info.status === "changed") {
-        await invoke("forget_host_key", { host: info.host, port: info.port });
-      }
+      // Always purge existing entries for this host before appending —
+      // covers stale partial entries (hostname-only, IP-only) that would
+      // otherwise survive alongside the new combined-form line and cause
+      // ssh duplicate-warning noise.
+      await invoke("forget_host_key", { host: info.host, port: info.port });
       await invoke("accept_host_key", { keyscanLine: info.keyscan_line });
       open = false;
       onAccept();

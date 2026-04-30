@@ -7,6 +7,7 @@
 //! to libvirt's ssh-without-a-TTY (which silently hangs or refuses).
 
 use std::io::{Read, Write};
+use std::net::ToSocketAddrs;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -101,10 +102,36 @@ pub fn check_host_key(host: &str, port: u16) -> Result<HostKeyInfo, VirtManagerE
         });
     };
 
+    // Format: "<host> <type> <base64 key>". We rebuild the host field
+    // to include the original hostname AND any resolved IPs so libvirt's
+    // ssh — which canonicalises hostnames differently from ssh-keyscan
+    // when ssh_config has a `Hostname` directive — finds the entry
+    // under whichever form it actually looks up.
     let mut parts = kline.split_whitespace();
-    let _scanned_host = parts.next();
+    let scanned_host = parts.next().unwrap_or(host).to_string();
     let key_type = parts.next().map(|s| s.to_string());
     let key_b64 = parts.next();
+
+    let mut names: Vec<String> = Vec::with_capacity(2);
+    names.push(host.to_string());
+    if scanned_host != host {
+        names.push(scanned_host);
+    }
+    if let Ok(addrs) = (host, port).to_socket_addrs() {
+        for a in addrs {
+            let ip_str = a.ip().to_string();
+            if !names.iter().any(|n| n == &ip_str) {
+                names.push(ip_str);
+            }
+        }
+    }
+    let combined_host = names.join(",");
+    let kline = match (key_type.as_deref(), key_b64) {
+        (Some(t), Some(b)) => format!("{combined_host} {t} {b}"),
+        _ => kline.clone(),
+    };
+    // Re-extract key_b64 from the rewritten line for fingerprint.
+    let key_b64 = kline.split_whitespace().nth(2);
     let fingerprint = key_b64.and_then(|b64| {
         use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD}, Engine as _};
         let decoded = STANDARD.decode(b64.trim()).ok()?;
@@ -133,12 +160,23 @@ pub fn check_host_key(host: &str, port: u16) -> Result<HostKeyInfo, VirtManagerE
     if let Some(mut s) = child.stdout.take() { let _ = s.read_to_string(&mut keygen_stdout); }
     let trusted = match status {
         Some(s) if s.success() => {
-            let scanned_body = kline.split_whitespace().nth(2);
-            let stored_body = keygen_stdout
+            let stored_line = keygen_stdout
                 .lines()
-                .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-                .and_then(|l| l.split_whitespace().nth(2));
-            scanned_body.is_some() && scanned_body == stored_body
+                .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
+            let stored_body = stored_line.and_then(|l| l.split_whitespace().nth(2));
+            let scanned_body = kline.split_whitespace().nth(2);
+            // Body must match AND the stored entry's first field must
+            // already contain every name we'd write — otherwise libvirt's
+            // ssh canonicalisation can miss the entry. Treat partial
+            // entries as untrusted so the user re-confirms and we
+            // rewrite to the combined form.
+            let body_match = scanned_body.is_some() && scanned_body == stored_body;
+            let stored_names: Vec<&str> = stored_line
+                .and_then(|l| l.split_whitespace().next())
+                .map(|s| s.split(',').collect())
+                .unwrap_or_default();
+            let names_complete = names.iter().all(|expected| stored_names.iter().any(|n| n == expected));
+            body_match && names_complete
         }
         _ => false,
     };
