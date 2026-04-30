@@ -2256,6 +2256,58 @@ impl LibvirtConnection {
         })
     }
 
+    /// Add or remove a per-host DHCP / DNS entry on a virtual network
+    /// using `virNetworkUpdate`. Affects both the live dnsmasq state
+    /// AND the persistent definition by default — a one-shot fix that
+    /// virt-manager users have done with virsh net-update for years.
+    ///
+    /// `command`: 3 = ADD_LAST, 2 = DELETE.
+    /// `section`: 4 = IP_DHCP_HOST, 10 = DNS_HOST,
+    ///            5 = IP_DHCP_RANGE, 14 = FORWARD_INTERFACE (etc).
+    pub fn network_update_section(
+        &self,
+        name: &str,
+        command: u32,
+        section: u32,
+        xml_snippet: &str,
+    ) -> Result<(), VirtManagerError> {
+        use std::ffi::CString;
+        use virt::network::Network;
+        let snippet = CString::new(xml_snippet).map_err(|_| {
+            VirtManagerError::OperationFailed {
+                operation: "networkUpdate".into(),
+                reason: "snippet has nul byte".into(),
+            }
+        })?;
+        self.with_connection(|conn| {
+            let net = Network::lookup_by_name(conn, name).map_err(|_| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNetwork".into(),
+                    reason: format!("network '{name}' not found"),
+                }
+            })?;
+            // VIR_NETWORK_UPDATE_AFFECT_LIVE | _CONFIG = 3.
+            // parentIndex = -1 (libvirt picks the only matching parent).
+            let r = unsafe {
+                virt_sys::virNetworkUpdate(
+                    net.as_ptr(),
+                    command,
+                    section,
+                    -1,
+                    snippet.as_ptr(),
+                    3,
+                )
+            };
+            if r < 0 {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "virNetworkUpdate".into(),
+                    reason: format!("returned {r}"),
+                });
+            }
+            Ok(())
+        })
+    }
+
     /// Set the autostart flag for a network.
     pub fn set_network_autostart(&self, name: &str, autostart: bool) -> Result<(), VirtManagerError> {
         self.with_connection(|conn| {

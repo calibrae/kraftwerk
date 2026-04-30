@@ -1,5 +1,6 @@
 <script>
   import { getState, refreshNetworks, startNetwork, stopNetwork, deleteNetwork, setNetworkAutostart, getNetworkXml } from "$lib/stores/app.svelte.js";
+  import NetworkHostsPanel from "./NetworkHostsPanel.svelte";
 
   let { onCreateNetwork } = $props();
   const appState = getState();
@@ -129,6 +130,8 @@
           {#if networkXml}
             <pre class="xml">{networkXml}</pre>
           {/if}
+
+          <NetworkHostsPanel networkName={selected.name} />
         </div>
       {/if}
     </div>

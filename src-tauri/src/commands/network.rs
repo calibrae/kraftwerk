@@ -163,3 +163,63 @@ pub fn create_nat_network(
     );
     state.libvirt().create_network(&xml)
 }
+
+// ── Per-host DHCP / DNS entries (phase 4.1) ──
+
+#[tauri::command]
+pub fn add_dhcp_host(
+    state: State<'_, AppState>,
+    network: String,
+    mac: Option<String>,
+    name: Option<String>,
+    ip: String,
+) -> Result<(), VirtManagerError> {
+    let snippet = crate::libvirt::network_config::build_dhcp_host_xml(
+        mac.as_deref().filter(|s| !s.is_empty()),
+        name.as_deref().filter(|s| !s.is_empty()),
+        &ip,
+    );
+    // VIR_NETWORK_UPDATE_COMMAND_ADD_LAST = 3
+    // VIR_NETWORK_SECTION_IP_DHCP_HOST    = 4
+    state.libvirt().network_update_section(&network, 3, 4, &snippet)
+}
+
+#[tauri::command]
+pub fn remove_dhcp_host(
+    state: State<'_, AppState>,
+    network: String,
+    mac: Option<String>,
+    name: Option<String>,
+    ip: String,
+) -> Result<(), VirtManagerError> {
+    let snippet = crate::libvirt::network_config::build_dhcp_host_xml(
+        mac.as_deref().filter(|s| !s.is_empty()),
+        name.as_deref().filter(|s| !s.is_empty()),
+        &ip,
+    );
+    // VIR_NETWORK_UPDATE_COMMAND_DELETE = 2
+    state.libvirt().network_update_section(&network, 2, 4, &snippet)
+}
+
+#[tauri::command]
+pub fn add_dns_host(
+    state: State<'_, AppState>,
+    network: String,
+    ip: String,
+    hostnames: Vec<String>,
+) -> Result<(), VirtManagerError> {
+    let snippet = crate::libvirt::network_config::build_dns_host_xml(&ip, &hostnames);
+    // SECTION_DNS_HOST = 10
+    state.libvirt().network_update_section(&network, 3, 10, &snippet)
+}
+
+#[tauri::command]
+pub fn remove_dns_host(
+    state: State<'_, AppState>,
+    network: String,
+    ip: String,
+    hostnames: Vec<String>,
+) -> Result<(), VirtManagerError> {
+    let snippet = crate::libvirt::network_config::build_dns_host_xml(&ip, &hostnames);
+    state.libvirt().network_update_section(&network, 2, 10, &snippet)
+}

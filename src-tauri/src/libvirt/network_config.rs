@@ -17,6 +17,15 @@ pub struct NetworkConfig {
     pub domain_name: Option<String>,
     pub ipv4: Option<IpConfig>,
     pub ipv6: Option<IpConfig>,
+    /// `<dns><host>` entries — local-resolver overrides for the network's
+    /// dnsmasq.
+    pub dns_hosts: Vec<DnsHost>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsHost {
+    pub ip: String,
+    pub hostnames: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -215,6 +224,16 @@ fn handle_start(
                 });
             }
         }
+        "host" if parent_is("dns") && grandparent_is("network") => {
+            // Started a <dns><host ip='...'> block; collect hostnames in
+            // the corresponding handle_text entry.
+            if let Some(ip) = get_attr(attrs, "ip") {
+                cfg.dns_hosts.push(DnsHost {
+                    ip: ip.to_string(),
+                    hostnames: Vec::new(),
+                });
+            }
+        }
         _ => {}
     }
 }
@@ -230,8 +249,51 @@ fn handle_text(cfg: &mut NetworkConfig, path: &[String], text: &str) {
     match (last, parent) {
         (Some("name"), Some("network")) => cfg.name = text.to_string(),
         (Some("uuid"), Some("network")) => cfg.uuid = text.to_string(),
+        (Some("hostname"), Some("host")) => {
+            // <dns><host ip='...'><hostname>foo</hostname></host></dns>
+            // Append to the last DNS host we started in handle_start.
+            if let Some(last_dns) = cfg.dns_hosts.last_mut() {
+                if !text.trim().is_empty() {
+                    last_dns.hostnames.push(text.to_string());
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// Build a `<host mac='...' name='...' ip='...'/>` snippet — the XML
+/// virNetworkUpdate(SECTION_IP_DHCP_HOST, ADD_LAST/DELETE) expects.
+pub fn build_dhcp_host_xml(mac: Option<&str>, name: Option<&str>, ip: &str) -> String {
+    use crate::libvirt::xml_helpers::escape_xml;
+    let mut s = String::from("<host");
+    if let Some(m) = mac {
+        if !m.is_empty() {
+            s.push_str(&format!(" mac='{}'", escape_xml(m)));
+        }
+    }
+    if let Some(n) = name {
+        if !n.is_empty() {
+            s.push_str(&format!(" name='{}'", escape_xml(n)));
+        }
+    }
+    s.push_str(&format!(" ip='{}'/>", escape_xml(ip)));
+    s
+}
+
+/// Build a `<host ip='...'><hostname>...</hostname></host>` snippet for
+/// SECTION_DNS_HOST. Multiple hostnames per entry are folded into one
+/// element since libvirt's update API takes one `<host>` at a time.
+pub fn build_dns_host_xml(ip: &str, hostnames: &[String]) -> String {
+    use crate::libvirt::xml_helpers::escape_xml;
+    let mut s = format!("<host ip='{}'>", escape_xml(ip));
+    for h in hostnames {
+        if !h.is_empty() {
+            s.push_str(&format!("<hostname>{}</hostname>", escape_xml(h)));
+        }
+    }
+    s.push_str("</host>");
+    s
 }
 
 /// Build a summary string like "192.168.100.1/24" for display.
@@ -805,5 +867,54 @@ mod tests {
         let cfg = parse(&xml).unwrap();
         assert_eq!(cfg.forward_mode, "route");
         assert_eq!(cfg.forward_dev.as_deref(), Some("eth1"));
+    }
+
+    // ── DNS host parsing + dhcp/dns host snippet builders ──
+
+    #[test]
+    fn parses_dns_hosts_with_multiple_hostnames() {
+        let xml = r#"<network>
+  <name>n1</name>
+  <forward mode='nat'/>
+  <dns>
+    <host ip='192.168.122.10'>
+      <hostname>foo</hostname>
+      <hostname>foo.lan</hostname>
+    </host>
+    <host ip='192.168.122.11'><hostname>bar</hostname></host>
+  </dns>
+  <ip address='192.168.122.1' netmask='255.255.255.0'/>
+</network>"#;
+        let cfg = parse(xml).unwrap();
+        assert_eq!(cfg.dns_hosts.len(), 2);
+        assert_eq!(cfg.dns_hosts[0].ip, "192.168.122.10");
+        assert_eq!(cfg.dns_hosts[0].hostnames, vec!["foo", "foo.lan"]);
+        assert_eq!(cfg.dns_hosts[1].hostnames, vec!["bar"]);
+    }
+
+    #[test]
+    fn dhcp_host_xml_omits_optional_attrs() {
+        let only_ip = build_dhcp_host_xml(None, None, "192.168.122.50");
+        assert_eq!(only_ip, "<host ip='192.168.122.50'/>");
+        let with_mac = build_dhcp_host_xml(Some("52:54:00:aa:bb:cc"), Some("ws"), "192.168.122.50");
+        assert_eq!(
+            with_mac,
+            "<host mac='52:54:00:aa:bb:cc' name='ws' ip='192.168.122.50'/>"
+        );
+    }
+
+    #[test]
+    fn dns_host_xml_with_hostnames() {
+        let xml = build_dns_host_xml("10.0.0.5", &["primary".into(), "primary.lan".into()]);
+        assert_eq!(
+            xml,
+            "<host ip='10.0.0.5'><hostname>primary</hostname><hostname>primary.lan</hostname></host>"
+        );
+    }
+
+    #[test]
+    fn dhcp_host_xml_escapes_xml() {
+        let s = build_dhcp_host_xml(None, Some("<script>"), "1.2.3.4");
+        assert!(s.contains("&lt;script&gt;"));
     }
 }

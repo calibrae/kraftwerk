@@ -115,6 +115,10 @@ pub fn run() {
             network::set_network_autostart,
             network::create_nat_network,
             network::create_network,
+            network::add_dhcp_host,
+            network::remove_dhcp_host,
+            network::add_dns_host,
+            network::remove_dns_host,
             // Storage
             storage::list_storage_pools,
             storage::get_pool_xml,
