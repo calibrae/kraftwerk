@@ -36,6 +36,38 @@ pub struct HostPciDevice {
     pub iommu_group: Option<u32>,
     /// PCI class code (`0x030000` = VGA, `0x020000` = ethernet, etc).
     pub class_code: Option<u32>,
+    /// SR-IOV info — PF/VF relationships parsed from the libvirt
+    /// capability XML. `None` for non-SR-IOV devices.
+    pub sriov: Option<SriovInfo>,
+}
+
+/// PCI bus/device/function tuple.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PciAddress {
+    pub domain: u16,
+    pub bus: u8,
+    pub slot: u8,
+    pub function: u8,
+}
+
+/// SR-IOV relationship for a PCI device. Either the device is a
+/// physical function (and `virt_functions` lists its VFs) or it is
+/// a virtual function (and `phys_function` points to its parent).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SriovInfo {
+    /// VFs attached to this PF. Empty when the device is a VF.
+    pub virt_functions: Vec<PciAddress>,
+    /// Max VFs the PF can spawn (`maxCount` attribute on
+    /// `<capability type='virt_functions'>`). None for non-PF devices.
+    pub max_vfs: Option<u32>,
+    /// PF address when this device is a VF.
+    pub phys_function: Option<PciAddress>,
+}
+
+impl SriovInfo {
+    pub fn is_pf(&self) -> bool { self.max_vfs.is_some() }
+    pub fn is_vf(&self) -> bool { self.phys_function.is_some() }
+    pub fn current_vfs(&self) -> usize { self.virt_functions.len() }
 }
 
 /// A USB device on the hypervisor host.
@@ -153,6 +185,12 @@ pub fn parse_pci_node_device(xml: &str) -> Result<HostPciDevice, VirtManagerErro
     // that came in on the start tag (e.g. vendor id) while we wait for text.
     let mut pending_vendor_id: Option<u16> = None;
     let mut pending_product_id: Option<u16> = None;
+    // SR-IOV: we accumulate a SriovInfo if we see virt_functions or
+    // phys_function nested capabilities. `current_inner_cap` tracks
+    // which inner capability block we are currently inside.
+    let mut sriov: SriovInfo = SriovInfo::default();
+    let mut sriov_seen = false;
+    let mut current_inner_cap: Option<String> = None;
 
     loop {
         match r.read_event_into(&mut buf) {
@@ -181,11 +219,38 @@ pub fn parse_pci_node_device(xml: &str) -> Result<HostPciDevice, VirtManagerErro
                     (Some("capability"), "iommuGroup") => {
                         iommu_group = get_attr(&attrs, "number").and_then(|s| s.parse().ok());
                     }
+                    // Nested capability — virt_functions / phys_function under
+                    // the outer pci capability. Track which one we're in so
+                    // <address/> children land in the right bucket.
+                    (Some("capability"), "capability") => {
+                        let t = get_attr(&attrs, "type").unwrap_or_default();
+                        if t == "virt_functions" {
+                            sriov_seen = true;
+                            sriov.max_vfs = get_attr(&attrs, "maxCount").and_then(|s| s.parse().ok());
+                        } else if t == "phys_function" {
+                            sriov_seen = true;
+                        }
+                        current_inner_cap = Some(t);
+                    }
+                    // <address/> inside virt_functions / phys_function.
+                    (Some("capability"), "address") => {
+                        if let Some(addr) = parse_pci_address(&attrs) {
+                            match current_inner_cap.as_deref() {
+                                Some("virt_functions") => sriov.virt_functions.push(addr),
+                                Some("phys_function") => sriov.phys_function = Some(addr),
+                                _ => {}
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 path.push(n);
             }
-            Ok(Event::End(_)) => {
+            Ok(Event::End(e)) => {
+                let n = utf8_name_end(&e);
+                if n == "capability" {
+                    current_inner_cap = None;
+                }
                 path.pop();
                 current_text_target = None;
             }
@@ -194,6 +259,16 @@ pub fn parse_pci_node_device(xml: &str) -> Result<HostPciDevice, VirtManagerErro
                 let a = attrs(&e);
                 if n == "iommuGroup" && path.last().map(String::as_str) == Some("capability") {
                     iommu_group = get_attr(&a, "number").and_then(|s| s.parse().ok());
+                }
+                // Self-closing <address/> inside an inner capability.
+                if n == "address" && path.last().map(String::as_str) == Some("capability") {
+                    if let Some(addr) = parse_pci_address(&a) {
+                        match current_inner_cap.as_deref() {
+                            Some("virt_functions") => sriov.virt_functions.push(addr),
+                            Some("phys_function") => sriov.phys_function = Some(addr),
+                            _ => {}
+                        }
+                    }
                 }
             }
             Ok(Event::Text(t)) => {
@@ -228,6 +303,16 @@ pub fn parse_pci_node_device(xml: &str) -> Result<HostPciDevice, VirtManagerErro
         domain, bus, slot, function,
         vendor_id, vendor_name, product_id, product_name,
         driver, iommu_group, class_code,
+        sriov: if sriov_seen { Some(sriov) } else { None },
+    })
+}
+
+fn parse_pci_address(attrs: &[(String, String)]) -> Option<PciAddress> {
+    Some(PciAddress {
+        domain: get_attr(attrs, "domain").and_then(parse_hex_u16)?,
+        bus: get_attr(attrs, "bus").and_then(parse_hex_u8)?,
+        slot: get_attr(attrs, "slot").and_then(parse_hex_u8)?,
+        function: get_attr(attrs, "function").and_then(parse_hex_u8)?,
     })
 }
 
@@ -1027,6 +1112,80 @@ mod tests {
         assert_eq!(types[0].available_instances, Some(8));
         assert_eq!(types[1].available_instances, Some(4));
         assert_eq!(types[0].parent, "pci_0000_07_00_0");
+    }
+
+    #[test]
+    fn parses_pci_pf_with_virt_functions() {
+        let xml = r#"<device>
+  <name>pci_0000_03_00_0</name>
+  <driver><name>i40e</name></driver>
+  <capability type='pci'>
+    <domain>0</domain>
+    <bus>3</bus>
+    <slot>0</slot>
+    <function>0</function>
+    <product id='0x1572'>X710</product>
+    <vendor id='0x8086'>Intel</vendor>
+    <capability type='virt_functions' maxCount='64'>
+      <address domain='0x0000' bus='0x03' slot='0x10' function='0x0'/>
+      <address domain='0x0000' bus='0x03' slot='0x10' function='0x2'/>
+      <address domain='0x0000' bus='0x03' slot='0x10' function='0x4'/>
+    </capability>
+    <iommuGroup number='25'/>
+  </capability>
+</device>"#;
+        let d = parse_pci_node_device(xml).unwrap();
+        let s = d.sriov.as_ref().expect("sriov info present");
+        assert!(s.is_pf());
+        assert!(!s.is_vf());
+        assert_eq!(s.max_vfs, Some(64));
+        assert_eq!(s.virt_functions.len(), 3);
+        assert_eq!(s.virt_functions[0].slot, 0x10);
+        assert_eq!(s.virt_functions[2].function, 0x4);
+        assert_eq!(s.current_vfs(), 3);
+    }
+
+    #[test]
+    fn parses_pci_vf_with_phys_function() {
+        let xml = r#"<device>
+  <name>pci_0000_03_10_0</name>
+  <driver><name>iavf</name></driver>
+  <capability type='pci'>
+    <domain>0</domain>
+    <bus>3</bus>
+    <slot>16</slot>
+    <function>0</function>
+    <product id='0x154c'>X710 VF</product>
+    <vendor id='0x8086'>Intel</vendor>
+    <capability type='phys_function'>
+      <address domain='0x0000' bus='0x03' slot='0x00' function='0x0'/>
+    </capability>
+    <iommuGroup number='40'/>
+  </capability>
+</device>"#;
+        let d = parse_pci_node_device(xml).unwrap();
+        let s = d.sriov.as_ref().expect("sriov info present");
+        assert!(s.is_vf());
+        assert!(!s.is_pf());
+        let pf = s.phys_function.unwrap();
+        assert_eq!(pf.bus, 3);
+        assert_eq!(pf.slot, 0);
+        assert!(s.virt_functions.is_empty());
+    }
+
+    #[test]
+    fn pci_without_sriov_has_none() {
+        let xml = r#"<device>
+  <name>pci_0000_00_00_0</name>
+  <capability type='pci'>
+    <domain>0</domain><bus>0</bus><slot>0</slot><function>0</function>
+    <product id='0x1234'>foo</product>
+    <vendor id='0x8086'>Intel</vendor>
+    <iommuGroup number='1'/>
+  </capability>
+</device>"#;
+        let d = parse_pci_node_device(xml).unwrap();
+        assert!(d.sriov.is_none());
     }
 
     #[test]

@@ -937,6 +937,7 @@ fn test_list_domain_hostdevs_on_fedora() {
             HostDevice::Pci { .. } => {}
             HostDevice::UsbAddress { .. } => {}
             HostDevice::UsbVendor { .. } => {}
+            HostDevice::Mdev { .. } => {}
         }
     }
 }

@@ -151,6 +151,8 @@
     );
   }
 
+  let sriovPfs = $derived(hostPci.filter((d) => d.sriov?.max_vfs != null));
+
   function describeAttached(d) {
     if (d.kind === "pci") return `PCI ${bdf(d)}`;
     if (d.kind === "usb_vendor") {
@@ -244,10 +246,32 @@
         need that driver unbound first — libvirt tries with
         <code>managed='yes'</code>.
       </div>
+
+      {#if sriovPfs.length > 0}
+        <details class="sriov-block">
+          <summary>SR-IOV virtual functions ({sriovPfs.length} PF{sriovPfs.length === 1 ? "" : "s"})</summary>
+          <p class="muted small">
+            VFs are spawned by the host kernel on demand. Set
+            <code>sriov_numvfs</code> in sysfs (root required); kraftwerk
+            picks them up on Refresh and they pass through like any other
+            PCI device.
+          </p>
+          <ul class="pf-list">
+            {#each sriovPfs as pf}
+              <li>
+                <code class="mono">{bdf(pf)}</code>
+                — {pf.product_name ?? pf.vendor_name}
+                <span class="muted">({pf.sriov.virt_functions.length}/{pf.sriov.max_vfs} VFs)</span>
+                <pre class="snippet"><code>ssh &lt;hypervisor&gt; "echo {pf.sriov.max_vfs} | sudo tee /sys/bus/pci/devices/0000:{pf.bus.toString(16).padStart(2,"0")}:{pf.slot.toString(16).padStart(2,"0")}.{pf.function.toString(16)}/sriov_numvfs"</code></pre>
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
       <div class="picker-list">
         <table>
           <thead>
-            <tr><th>Address</th><th>Device</th><th>Vendor</th><th>Class</th><th>Driver</th><th>IOMMU</th><th></th></tr>
+            <tr><th>Address</th><th>Device</th><th>Vendor</th><th>Class</th><th>SR-IOV</th><th>Driver</th><th>IOMMU</th><th></th></tr>
           </thead>
           <tbody>
             {#each hostPci as d}
@@ -259,6 +283,13 @@
                 <td>
                   {#if pciClassLabel(d.class_code)}
                     <span class="class-badge">{pciClassLabel(d.class_code)}</span>
+                  {/if}
+                </td>
+                <td>
+                  {#if d.sriov?.max_vfs != null}
+                    <span class="sriov-badge pf">PF · {d.sriov.virt_functions.length}/{d.sriov.max_vfs}</span>
+                  {:else if d.sriov?.phys_function}
+                    <span class="sriov-badge vf">VF</span>
                   {/if}
                 </td>
                 <td class="mono" title={d.driver ?? ""}>{d.driver ?? "—"}</td>
@@ -465,6 +496,18 @@
   .kind-badge.pci { background: rgba(99,102,241,0.2); color: #a5b4fc; }
   .kind-badge.usb_vendor, .kind-badge.usb_address { background: rgba(16,185,129,0.2); color: #6ee7b7; }
   .kind-badge.mdev { background: rgba(217,70,239,0.2); color: #f0abfc; }
+  .sriov-badge { display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; }
+  .sriov-badge.pf { background: rgba(59,130,246,0.2); color: #93c5fd; }
+  .sriov-badge.vf { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+  .sriov-block { margin: 10px 20px 0; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 6px; background: rgba(0,0,0,0.15); }
+  .sriov-block summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
+  .pf-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex;
+    flex-direction: column; gap: 8px; }
+  .snippet { margin: 4px 0 0; padding: 6px 8px; background: rgba(0,0,0,0.3);
+    border-radius: 4px; overflow-x: auto; font-size: 11px; }
+  .snippet code { font-family: 'SF Mono', monospace; }
   .sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
            color: var(--text-muted); margin: 12px 0 6px; font-weight: 600; }
   .sub-h:first-child { margin-top: 0; }

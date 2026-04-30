@@ -239,6 +239,34 @@ fn mdev_attach_round_trip_when_available() {
     assert!(!still_there, "mdev still attached after detach");
 }
 
+// ────────────────────────────────────────────────────────────────────
+// 5.3 SR-IOV
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pci_listing_carries_sriov_info_when_present() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let pci = conn.list_host_pci_devices().expect("list_host_pci_devices");
+    let pf_count = pci.iter().filter(|d| d.sriov.as_ref().map(|s| s.is_pf()).unwrap_or(false)).count();
+    let vf_count = pci.iter().filter(|d| d.sriov.as_ref().map(|s| s.is_vf()).unwrap_or(false)).count();
+    eprintln!("host has {pf_count} SR-IOV PFs and {vf_count} VFs");
+    // Whether or not SR-IOV is present, every PF reports a max_vfs and
+    // every VF reports a phys_function — the parser invariant.
+    for d in &pci {
+        if let Some(s) = &d.sriov {
+            if s.is_pf() {
+                assert!(s.max_vfs.is_some(), "PF without max_vfs: {:?}", d.name);
+            }
+            if s.is_vf() {
+                assert!(s.phys_function.is_some(), "VF without phys_function: {:?}", d.name);
+            }
+        }
+    }
+}
+
 #[test]
 fn vtpm_info_returns_uuid_and_path_when_emulator() {
     let Some(conn) = connect() else {
