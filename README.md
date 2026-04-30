@@ -8,9 +8,12 @@
 Cross-platform desktop manager for remote KVM/QEMU virtual machines.
 Rust + Tauri + Svelte, speaking libvirt over SSH.
 
-A Rust port of the macOS [virtmanager](../virtmanager) Swift app with
-meaningful UX overlap with Red Hat's Python `virt-manager` — without
-GTK, without Python, without X11 forwarding.
+A pivot from an earlier macOS-only Swift prototype, rewritten as a
+cross-platform Rust + Tauri + Svelte app. Meaningful UX overlap with
+Red Hat's Python `virt-manager` — without GTK, without Python, without
+X11 forwarding. The SPICE console is pure-Rust via
+[capsaicin](https://github.com/calibrae/capsaicin) (sibling project,
+written for kraftwerk).
 
 ```
 Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
@@ -18,8 +21,9 @@ Connect → Browse VMs → Console (serial/VNC/SPICE) → Configure → Create
 
 ## Status
 
-Working daily driver against a real KVM host. **399 unit tests + 75
-integration tests** against live hypervisors (per-domain + memory + vCPU max edits), all green.
+Working daily driver against a real KVM host. **435 unit tests + 22
+integration tests** against live hypervisors (per-domain + memory +
+vCPU + networking + phase-5 advanced devices + live migration), all green.
 
 Feature parity snapshot with Python virt-manager:
 
@@ -35,7 +39,7 @@ Feature parity snapshot with Python virt-manager:
 | Raw domain-XML editor (escape hatch for unmodelled fields) | ✅ |
 | Serial console (crytter WASM terminal) | ✅ |
 | VNC console (noVNC, SSH-tunneled) | ✅ |
-| SPICE console (capsaicin, native-Rust, with cursor + absolute mouse) | ✅ |
+| SPICE console ([capsaicin](https://github.com/calibrae/capsaicin), native-Rust, with cursor + absolute mouse) | ✅ |
 | Virtual networks (list + create NAT/route/open/isolated/bridge) | ✅ |
 | Storage pools + volumes (dir/netfs/logical/iscsi, qcow2/raw/iso) | ✅ |
 | Pool/volume delete guards (refuse with named domains when still attached) | ✅ |
