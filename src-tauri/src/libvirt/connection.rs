@@ -3191,6 +3191,210 @@ impl LibvirtConnection {
         Ok(new_name)
     }
 
+    /// Inspect an OVA file *without* importing it. Reads the OVF
+    /// descriptor entry from the local tar, parses metadata. Used by
+    /// the import wizard to preview what's about to be imported.
+    pub fn inspect_ova(&self, ova_path: &str) -> Result<crate::libvirt::ovf_import::OvfMetadata, VirtManagerError> {
+        use std::fs::File;
+        use std::io::Read;
+        use tar::Archive;
+
+        let f = File::open(ova_path).map_err(|e| VirtManagerError::OperationFailed {
+            operation: "openOva".into(),
+            reason: format!("{ova_path}: {e}"),
+        })?;
+        let mut ar = Archive::new(f);
+        for entry in ar.entries().map_err(|e| VirtManagerError::OperationFailed {
+            operation: "readOva".into(), reason: e.to_string(),
+        })? {
+            let mut e = entry.map_err(|err| VirtManagerError::OperationFailed {
+                operation: "readOvaEntry".into(), reason: err.to_string(),
+            })?;
+            let p = e.path().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            if p.to_lowercase().ends_with(".ovf") {
+                let mut buf = String::new();
+                e.read_to_string(&mut buf).map_err(|err| VirtManagerError::OperationFailed {
+                    operation: "readOvfEntry".into(), reason: err.to_string(),
+                })?;
+                return crate::libvirt::ovf_import::parse_ovf(&buf);
+            }
+        }
+        Err(VirtManagerError::OperationFailed {
+            operation: "inspectOva".into(),
+            reason: "no .ovf descriptor found in archive".into(),
+        })
+    }
+
+    /// Import an OVA: parse the OVF, stream each VMDK from the local
+    /// tar through SSH+qemu-img into the chosen pool's directory as
+    /// qcow2, then define a domain XML referencing the new volumes.
+    /// Returns the new domain's name.
+    pub fn import_ova(
+        &self,
+        ova_path: &str,
+        pool_name: &str,
+        target_name: Option<&str>,
+        network_name: Option<&str>,
+    ) -> Result<String, VirtManagerError> {
+        use std::fs::File;
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+        use tar::Archive;
+
+        let pool_cfg = self.get_pool_config(pool_name)?;
+        let pool_path = pool_cfg.target_path.ok_or_else(|| VirtManagerError::OperationFailed {
+            operation: "importOva".into(),
+            reason: format!("pool {pool_name} has no target path (only `dir` pools are supported)"),
+        })?;
+
+        // First pass: parse OVF to know which entries to extract.
+        let metadata = self.inspect_ova(ova_path)?;
+        let new_name = target_name.map(str::to_string).unwrap_or_else(|| metadata.name.clone());
+        if new_name.trim().is_empty() {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "importOva".into(),
+                reason: "no name in OVF and none provided".into(),
+            });
+        }
+
+        let uri = self.uri()?;
+        let ssh_target = crate::libvirt::vnc_proxy::parse_ssh_target(&uri).ok_or_else(|| {
+            VirtManagerError::OperationFailed {
+                operation: "importOva".into(),
+                reason: "OVA import requires a qemu+ssh URI".into(),
+            }
+        })?;
+
+        // Map of file_href -> destination qcow2 path.
+        let mut converted: Vec<(String, String)> = Vec::new();
+        for (idx, disk) in metadata.disks.iter().enumerate() {
+            let Some(href) = &disk.file_href else { continue };
+            let dest_filename = if metadata.disks.len() == 1 {
+                format!("{new_name}.qcow2")
+            } else {
+                format!("{new_name}-{idx}.qcow2")
+            };
+            let dest_path = format!("{}/{}", pool_path.trim_end_matches('/'), dest_filename);
+
+            // Locate the VMDK entry in the tar and stream it through SSH.
+            let f = File::open(ova_path).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "openOva".into(), reason: e.to_string(),
+            })?;
+            let mut ar = Archive::new(f);
+            let mut found = false;
+            for entry in ar.entries().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "readOva".into(), reason: e.to_string(),
+            })? {
+                let mut e = entry.map_err(|err| VirtManagerError::OperationFailed {
+                    operation: "readOvaEntry".into(), reason: err.to_string(),
+                })?;
+                let p = e.path().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                let basename = std::path::Path::new(&p)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or(p.clone());
+                if basename == *href || p == *href {
+                    found = true;
+                    let cmd = format!(
+                        "qemu-img convert -p -O qcow2 -f vmdk - '{}'",
+                        dest_path,
+                    );
+                    let mut child = Command::new("ssh")
+                        .arg("-o").arg("BatchMode=yes")
+                        .arg(&ssh_target)
+                        .arg(&cmd)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .map_err(|err| VirtManagerError::OperationFailed {
+                            operation: "spawnQemuImg".into(), reason: err.to_string(),
+                        })?;
+
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let mut buf = [0u8; 1024 * 64];
+                        loop {
+                            match e.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => stdin.write_all(&buf[..n]).map_err(|err| VirtManagerError::OperationFailed {
+                                    operation: "pipeVmdk".into(), reason: err.to_string(),
+                                })?,
+                                Err(err) => return Err(VirtManagerError::OperationFailed {
+                                    operation: "readVmdk".into(), reason: err.to_string(),
+                                }),
+                            }
+                        }
+                    }
+                    let status = child.wait().map_err(|err| VirtManagerError::OperationFailed {
+                        operation: "waitQemuImg".into(), reason: err.to_string(),
+                    })?;
+                    if !status.success() {
+                        let mut errbuf = String::new();
+                        if let Some(mut s) = child.stderr.take() { let _ = s.read_to_string(&mut errbuf); }
+                        return Err(VirtManagerError::OperationFailed {
+                            operation: "qemuImgConvert".into(),
+                            reason: format!("conversion failed: {}", errbuf.trim()),
+                        });
+                    }
+                    converted.push((href.clone(), dest_path));
+                    break;
+                }
+            }
+            if !found {
+                return Err(VirtManagerError::OperationFailed {
+                    operation: "importOva".into(),
+                    reason: format!("OVA missing referenced disk file '{href}'"),
+                });
+            }
+        }
+        let _ = self.refresh_pool(pool_name);
+
+        // Compose domain XML using domain_builder for the first disk;
+        // splice extra disks for the rest.
+        use crate::libvirt::domain_builder::{
+            DomainBuildParams, DiskSource, NetworkSource, InstallMedia, build_domain_xml,
+        };
+        let first_disk_path = converted.first().map(|(_, p)| p.clone()).ok_or_else(|| {
+            VirtManagerError::OperationFailed {
+                operation: "importOva".into(), reason: "no disks converted".into(),
+            }
+        })?;
+        let net = match network_name {
+            Some(n) => NetworkSource::Network { name: n.into() },
+            None => NetworkSource::None,
+        };
+        let params = DomainBuildParams {
+            name: new_name.clone(),
+            memory_mb: metadata.memory_mib.unwrap_or(2048),
+            vcpus: metadata.vcpus.unwrap_or(2),
+            os_type: "linux".into(),
+            machine_type: "q35".into(),
+            arch: "x86_64".into(),
+            firmware: "bios".into(),
+            disk_bus: "virtio".into(),
+            nic_model: "virtio".into(),
+            video_model: "virtio".into(),
+            disk_source: DiskSource::ExistingPath { path: first_disk_path, format: "qcow2".into() },
+            network: net,
+            install_media: InstallMedia { iso_path: None },
+            graphics: "vnc".into(),
+        };
+        let mut xml = build_domain_xml(&params);
+
+        // Splice extra converted disks (vdb, vdc, …) before </devices>.
+        for (i, (_, path)) in converted.iter().enumerate().skip(1) {
+            let dev = format!("vd{}", (b'a' + i as u8) as char);
+            let extra = format!(
+                "<disk type='file' device='disk'>\n  <driver name='qemu' type='qcow2'/>\n  <source file='{}'/>\n  <target dev='{}' bus='virtio'/>\n</disk>\n",
+                path, dev,
+            );
+            xml = inject_disk_before_close(&xml, &extra);
+        }
+
+        self.define_domain_xml(&xml)?;
+        Ok(new_name)
+    }
+
     /// Resolve the curated image catalog against a storage pool's
     /// existing volumes — each entry comes back with `local_path`
     /// populated when its filename is already present.

@@ -85,6 +85,22 @@ fn list_catalog_images_against_default_pool() {
 }
 
 #[test]
+fn inspect_ova_when_path_set() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let Some(ova) = std::env::var("KRAFTWERK_OVA_TEST_PATH").ok().filter(|s| !s.is_empty()) else {
+        eprintln!("SKIP: KRAFTWERK_OVA_TEST_PATH unset");
+        return;
+    };
+    let md = conn.inspect_ova(&ova).expect("inspect_ova");
+    eprintln!("name={:?} disks={} vcpus={:?} mem={:?}MiB",
+        md.name, md.disks.len(), md.vcpus, md.memory_mib);
+    assert!(!md.disks.is_empty(), "OVA should declare at least one disk");
+}
+
+#[test]
 fn build_cloud_init_iso_when_tools_available() {
     let Some(conn) = connect() else {
         eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");

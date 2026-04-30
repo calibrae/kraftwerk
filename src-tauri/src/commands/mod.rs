@@ -23,3 +23,4 @@ pub mod launch_security;
 pub mod migration;
 pub mod templates;
 pub mod image_catalog;
+pub mod ovf_import;

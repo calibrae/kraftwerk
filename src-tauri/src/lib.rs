@@ -29,6 +29,7 @@ use commands::launch_security as cmd_launch_sec;
 use commands::migration as cmd_migration;
 use commands::templates as cmd_templates;
 use commands::image_catalog as cmd_images;
+use commands::ovf_import as cmd_ovf;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -228,6 +229,8 @@ pub fn run() {
             cmd_images::list_image_catalog,
             cmd_images::list_image_catalog_for_pool,
             cmd_images::download_image,
+            cmd_ovf::inspect_ova,
+            cmd_ovf::import_ova,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

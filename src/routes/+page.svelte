@@ -10,6 +10,7 @@
   import CreatePoolDialog from "$lib/components/CreatePoolDialog.svelte";
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import VmWizard from "$lib/components/VmWizard.svelte";
+  import OvaImportDialog from "$lib/components/OvaImportDialog.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
 
@@ -63,6 +64,7 @@
   let showPoolDialog = $state(false);
   let showVolumeDialog = $state(false);
   let showVmWizard = $state(false);
+  let showOvaImport = $state(false);
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
@@ -87,6 +89,7 @@
           Virtual Machines <span class="count">{appState.vms.length}</span>
         </button>
         <button class="view-tab new-btn" onclick={() => showVmWizard = true} title="Create new VM">+ New VM</button>
+        <button class="view-tab new-btn" onclick={() => showOvaImport = true} title="Import an OVA / OVF appliance">↥ Import OVA</button>
         <button class="view-tab" class:active={view === "networks"} onclick={() => view = "networks"}>
           Networks <span class="count">{appState.networks.length}</span>
         </button>
@@ -117,6 +120,7 @@
 <CreatePoolDialog bind:open={showPoolDialog} />
 <CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />
 <VmWizard bind:open={showVmWizard} />
+<OvaImportDialog bind:open={showOvaImport} />
 
 {#if appState.error}
   <div class="toast-error">
