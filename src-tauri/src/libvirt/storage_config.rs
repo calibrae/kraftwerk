@@ -217,7 +217,8 @@ fn handle_volume_text(cfg: &mut VolumeConfig, path: &[String], text: &str) {
 #[derive(Debug, Clone, Default)]
 pub struct PoolBuildParams<'a> {
     pub name: &'a str,
-    /// "dir" | "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd"
+    /// "dir" | "fs" | "netfs" | "logical" | "iscsi" | "iscsi-direct"
+    /// | "rbd" | "zfs"
     pub pool_type: &'a str,
     /// Target path on host (used by `dir` and `netfs` as the mount point).
     pub target_path: Option<&'a str>,
@@ -253,7 +254,7 @@ pub fn build_pool_xml(p: &PoolBuildParams) -> String {
     // Source section — only for types that need it
     let needs_source = matches!(
         t,
-        "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd"
+        "netfs" | "logical" | "iscsi" | "iscsi-direct" | "rbd" | "zfs"
     );
     if needs_source {
         xml.push_str("  <source>\n");
@@ -637,6 +638,23 @@ mod tests {
         assert!(xml.contains("<pool type='rbd'>"));
         assert!(xml.contains("<auth type='ceph' username='libvirt'>"));
         assert!(xml.contains("<secret uuid='deadbeef-0000-0000-0000-000000000001'/>"));
+    }
+
+    #[test]
+    fn zfs_pool_uses_source_name_as_dataset() {
+        let xml = build_pool_xml(&PoolBuildParams {
+            name: "zpool",
+            pool_type: "zfs",
+            target_path: None,
+            source_host: None,
+            source_dir: None,
+            source_name: Some("tank/libvirt"),
+            auth: None,
+        });
+        assert!(xml.contains("<pool type='zfs'>"));
+        assert!(xml.contains("<name>tank/libvirt</name>"));
+        // ZFS doesn't use a target path.
+        assert!(!xml.contains("<target>"));
     }
 
     #[test]

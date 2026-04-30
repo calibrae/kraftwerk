@@ -10,6 +10,7 @@
     { id: "logical", label: "LVM Volume Group", desc: "Existing LVM volume group on the host" },
     { id: "iscsi",   label: "iSCSI",        desc: "Remote iSCSI target" },
     { id: "rbd",     label: "Ceph / RBD",   desc: "RADOS Block Device pool on a Ceph cluster" },
+    { id: "zfs",     label: "ZFS Dataset",  desc: "Existing ZFS pool/dataset on the hypervisor host" },
   ];
 
   let poolType = $state("dir");
@@ -33,7 +34,8 @@
   // Which extra fields to show per pool type
   let showSourceHost = $derived(poolType === "netfs" || poolType === "iscsi" || poolType === "rbd");
   let showSourceDir = $derived(poolType === "netfs" || poolType === "iscsi");
-  let showSourceName = $derived(poolType === "logical" || poolType === "rbd");
+  let showSourceName = $derived(poolType === "logical" || poolType === "rbd" || poolType === "zfs");
+  let showTargetPath = $derived(poolType !== "rbd" && poolType !== "zfs");
   let showAuth = $derived(poolType === "iscsi" || poolType === "rbd");
   let authType = $derived(poolType === "rbd" ? "ceph" : "chap");
   let secretUsageType = $derived(poolType === "rbd" ? "ceph" : "iscsi");
@@ -41,7 +43,8 @@
     poolType === "dir" ? "Directory will be created if it doesn't exist." :
     poolType === "netfs" ? "Local mount point where the NFS share will be mounted." :
     poolType === "logical" ? "Device path (e.g. /dev/vg-name)." :
-    "Local path for iSCSI block device."
+    poolType === "iscsi" ? "Local path for iSCSI block device." :
+    ""
   );
 
   function reset() {
@@ -96,7 +99,7 @@
       await createPool({
         name: name.trim(),
         pool_type: poolType,
-        target_path: targetPath.trim() || null,
+        target_path: showTargetPath ? (targetPath.trim() || null) : null,
         source_host: showSourceHost ? (sourceHost.trim() || null) : null,
         source_dir: showSourceDir ? (sourceDir.trim() || null) : null,
         source_name: showSourceName ? (sourceName.trim() || null) : null,
@@ -137,11 +140,13 @@
           <input bind:value={name} placeholder="my-pool" required />
         </label>
 
-        <label>
-          <span>Target Path</span>
-          <input bind:value={targetPath} />
-          <small class="hint">{targetHelp}</small>
-        </label>
+        {#if showTargetPath}
+          <label>
+            <span>Target Path</span>
+            <input bind:value={targetPath} />
+            <small class="hint">{targetHelp}</small>
+          </label>
+        {/if}
 
         {#if showSourceHost}
           <label>
@@ -159,8 +164,16 @@
 
         {#if showSourceName}
           <label>
-            <span>{poolType === "rbd" ? "Ceph Pool Name" : "Volume Group Name"}</span>
-            <input bind:value={sourceName} placeholder={poolType === "rbd" ? "libvirt-pool" : "my-vg"} />
+            <span>
+              {poolType === "rbd" ? "Ceph Pool Name"
+                : poolType === "zfs" ? "ZFS Dataset (pool/path)"
+                : "Volume Group Name"}
+            </span>
+            <input bind:value={sourceName} placeholder={
+              poolType === "rbd" ? "libvirt-pool"
+                : poolType === "zfs" ? "tank/libvirt"
+                : "my-vg"
+            } />
           </label>
         {/if}
 
