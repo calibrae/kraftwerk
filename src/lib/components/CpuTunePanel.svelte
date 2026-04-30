@@ -15,6 +15,8 @@
   let cfg = $state(null);     // saved snapshot
   let edit = $state(null);    // mutable copy
   let caps = $state(null);    // DomainCaps (for custom model picker)
+  let nested = $state(null);  // NestedVirtState
+  let nestedBusy = $state(false);
   let loading = $state(true);
   let busy = $state(false);
   let err = $state(null);
@@ -29,13 +31,15 @@
   async function reload() {
     loading = true; err = null;
     try {
-      const [s, dc] = await Promise.all([
+      const [s, dc, nv] = await Promise.all([
         invoke("get_cpu_tune", { name: vmName }),
         invoke("get_domain_capabilities", {}).catch(() => null),
+        invoke("get_nested_virt_state", { name: vmName }).catch(() => null),
       ]);
       cfg = s;
       edit = deepClone(s);
       caps = dc;
+      nested = nv;
     } catch (e) {
       err = e?.message || JSON.stringify(e);
     } finally {
@@ -44,6 +48,22 @@
   }
 
   $effect(() => { if (vmName) reload(); });
+
+  async function toggleNested() {
+    if (!nested || nestedBusy) return;
+    if (nested.cpu_mode === "host-passthrough") return;
+    nestedBusy = true;
+    err = null;
+    try {
+      await invoke("set_nested_virt", { name: vmName, enable: !nested.enabled_in_domain });
+      // Refresh just the nested slice — full reload would clobber edits.
+      nested = await invoke("get_nested_virt_state", { name: vmName });
+    } catch (e) {
+      err = e?.message || JSON.stringify(e);
+    } finally {
+      nestedBusy = false;
+    }
+  }
 
   function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
 
@@ -195,6 +215,39 @@
         Most tuning takes effect on next boot. vCPU count and iothreads
         have dedicated live-apply buttons.
       </div>
+    {/if}
+
+    <!-- ── Nested virtualization (phase 5.4) ── -->
+    {#if nested}
+      <section class="nested">
+        <h3>Nested virtualization</h3>
+        <div class="nested-row">
+          <span class="vendor-pill" class:intel={nested.vendor === "intel"} class:amd={nested.vendor === "amd"}>
+            {nested.vendor === "unknown" ? "?" : nested.vendor}
+          </span>
+          <span class="muted small">domain mode <code>{nested.cpu_mode || "(none)"}</code></span>
+          <span class="grow"></span>
+          {#if nested.cpu_mode === "host-passthrough"}
+            <span class="muted small">inherits from host</span>
+          {:else if nested.vendor === "unknown"}
+            <span class="muted small">unknown vendor — can't toggle</span>
+          {:else}
+            <button class="btn-small" class:on={nested.enabled_in_domain}
+              onclick={toggleNested} disabled={nestedBusy || busy}>
+              {nestedBusy ? "…" : nested.enabled_in_domain ? "Enabled — click to disable" : "Disabled — click to enable"}
+            </button>
+          {/if}
+        </div>
+        <p class="muted small">
+          {#if nested.enabled_in_host === true}
+            Host kernel module reports <code>nested=Y</code> — VMs that opt in will see {nested.vendor === "intel" ? "vmx" : "svm"}.
+          {:else if nested.enabled_in_host === false}
+            <strong>Host kernel module reports <code>nested=N</code></strong> — no VM can boot a hypervisor inside until this is fixed on the host (modprobe options or sysfs).
+          {:else}
+            Host kernel module status unknown (needs SSH access to read /sys/module/kvm_*/parameters/nested).
+          {/if}
+        </p>
+      </section>
     {/if}
 
     <!-- ── CPU section ── -->
@@ -501,4 +554,17 @@
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .actions { display: flex; gap: 8px; align-items: center; padding-top: 4px; }
   .saved-note { color: #34d399; font-size: 12px; margin-left: 8px; }
+
+  section.nested { padding: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; }
+  section.nested h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .nested-row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; }
+  .vendor-pill {
+    font-size: 10px; padding: 2px 8px; border-radius: 4px;
+    background: var(--bg-input); color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .vendor-pill.intel { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
+  .vendor-pill.amd   { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+  .btn-small.on { background: rgba(52, 211, 153, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.4); }
 </style>

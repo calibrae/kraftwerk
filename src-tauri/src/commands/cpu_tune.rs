@@ -41,3 +41,20 @@ pub fn set_iothread_count(
 ) -> Result<(), VirtManagerError> {
     state.libvirt().set_iothread_count(&name, count)
 }
+
+#[tauri::command]
+pub fn get_nested_virt_state(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<crate::libvirt::nested_virt::NestedVirtState, VirtManagerError> {
+    state.libvirt().get_nested_virt_state(&name)
+}
+
+#[tauri::command]
+pub fn set_nested_virt(
+    state: State<'_, AppState>,
+    name: String,
+    enable: bool,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_nested_virt(&name, enable)
+}

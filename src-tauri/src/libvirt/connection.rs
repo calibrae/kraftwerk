@@ -2308,6 +2308,169 @@ impl LibvirtConnection {
         })
     }
 
+    /// Bundle the nested-virt state for a domain: host vendor, domain
+    /// CPU mode, whether the domain XML implies nested, and the host
+    /// kernel module's nested parameter.
+    pub fn get_nested_virt_state(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::nested_virt::NestedVirtState, VirtManagerError> {
+        use crate::libvirt::cpu_tune_config;
+        use crate::libvirt::nested_virt::{
+            domain_nested_enabled, parse_host_vendor, NestedVirtState,
+        };
+
+        let caps = self.get_host_capabilities_xml()?;
+        let vendor = parse_host_vendor(&caps);
+
+        let xml = self.get_domain_xml(name, true)?;
+        let snap = cpu_tune_config::parse(&xml)?;
+        let cpu_mode = snap.cpu.mode.clone();
+        let features: Vec<(String, String)> = snap
+            .cpu
+            .features
+            .iter()
+            .map(|f| (f.name.clone(), f.policy.clone()))
+            .collect();
+        let enabled_in_domain = domain_nested_enabled(vendor, &cpu_mode, &features);
+
+        let enabled_in_host = self.read_host_nested_param(vendor)?;
+        Ok(NestedVirtState {
+            vendor,
+            cpu_mode,
+            enabled_in_domain,
+            enabled_in_host,
+        })
+    }
+
+    /// Toggle the vmx/svm CPU feature on a domain. No-op when the
+    /// host vendor is unknown or when the mode is host-passthrough
+    /// (passthrough already inherits). Persistent-only — VM has to
+    /// reboot for the change to take effect.
+    pub fn set_nested_virt(&self, name: &str, enable: bool) -> Result<(), VirtManagerError> {
+        use crate::libvirt::cpu_tune_config::{self, CpuConfig, CpuFeature, CpuTunePatch};
+        use crate::libvirt::nested_virt::parse_host_vendor;
+
+        let caps = self.get_host_capabilities_xml()?;
+        let vendor = parse_host_vendor(&caps);
+        let Some(needed) = vendor.nested_feature() else {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setNestedVirt".into(),
+                reason: "host CPU vendor unknown — cannot pick vmx vs svm".into(),
+            });
+        };
+
+        let xml = self.get_domain_xml(name, true)?;
+        let snap = cpu_tune_config::parse(&xml)?;
+
+        if snap.cpu.mode == "host-passthrough" {
+            return Err(VirtManagerError::OperationFailed {
+                operation: "setNestedVirt".into(),
+                reason: "domain uses host-passthrough — nested already inherits from host. Toggle the host kernel module instead.".into(),
+            });
+        }
+
+        // Build a new CpuConfig with the feature added or removed.
+        let mut new_features: Vec<CpuFeature> = snap
+            .cpu
+            .features
+            .iter()
+            .filter(|f| f.name != needed)
+            .cloned()
+            .collect();
+        if enable {
+            new_features.push(CpuFeature {
+                name: needed.into(),
+                policy: "require".into(),
+            });
+        }
+        let new_cpu = CpuConfig { features: new_features, ..snap.cpu };
+        let patch = CpuTunePatch {
+            cpu: Some(new_cpu),
+            ..Default::default()
+        };
+        self.apply_cpu_tune(name, &patch)
+    }
+
+    /// Read the host's libvirt capabilities XML (for vendor / arch /
+    /// supported guest types). Cached at the libvirt-driver level so
+    /// repeat calls are cheap.
+    pub fn get_host_capabilities_xml(&self) -> Result<String, VirtManagerError> {
+        self.with_connection(|conn| {
+            conn.get_capabilities().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "getCapabilities".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Detect the host's `kvm_intel` / `kvm_amd` `nested` parameter via
+    /// SSH (or local fs read for `qemu:///system`). Returns None when
+    /// the path doesn't exist (vendor mismatch) or read fails.
+    pub fn read_host_nested_param(&self, vendor: crate::libvirt::nested_virt::CpuVendor) -> Result<Option<bool>, VirtManagerError> {
+        let Some(path) = vendor.nested_module_path() else {
+            return Ok(None);
+        };
+        let uri = self.uri()?;
+        // Reuse the qemu_log SSH helper's read pattern: spawn `cat path`
+        // remotely, parse the result. Inline here so we don't fold the
+        // qemu_log abstraction into something it isn't.
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+        use wait_timeout::ChildExt;
+
+        if let Some(target) = crate::libvirt::vnc_proxy::parse_ssh_target(&uri) {
+            let remote_cmd = format!("cat {path}");
+            let mut child = Command::new("ssh")
+                .arg("-o").arg("BatchMode=yes")
+                .arg("-o").arg("ConnectTimeout=5")
+                .arg("-o").arg("StrictHostKeyChecking=accept-new")
+                .arg(&target)
+                .arg(&remote_cmd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "nestedSpawnSsh".into(),
+                    reason: e.to_string(),
+                })?;
+            let status = match child.wait_timeout(Duration::from_secs(8)) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(None);
+                }
+                Err(_) => return Ok(None),
+            };
+            if !status.success() {
+                return Ok(None);
+            }
+            let mut out = String::new();
+            if let Some(mut s) = child.stdout.take() { let _ = s.read_to_string(&mut out); }
+            Ok(Some(crate::libvirt::nested_virt::parse_nested_module_value(&out)))
+        } else {
+            // Local read.
+            match std::fs::read_to_string(path) {
+                Ok(s) => Ok(Some(crate::libvirt::nested_virt::parse_nested_module_value(&s))),
+                Err(_) => Ok(None),
+            }
+        }
+    }
+
+    /// Get the URI we connected with. Used by helpers that need to
+    /// re-derive the SSH target.
+    pub fn uri(&self) -> Result<String, VirtManagerError> {
+        self.with_connection(|conn| {
+            conn.get_uri().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "connectGetUri".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     /// List all nwfilters defined on the hypervisor — built-in libvirt
     /// filters (clean-traffic, no-mac-spoofing, no-ip-spoofing, allow-arp,
     /// no-arp-spoofing, etc.) plus any user-defined ones.

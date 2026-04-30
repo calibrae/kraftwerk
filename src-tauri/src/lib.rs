@@ -206,6 +206,8 @@ pub fn run() {
             cmd_cpu_tune::apply_cpu_tune,
             cmd_cpu_tune::set_vcpu_count,
             cmd_cpu_tune::set_iothread_count,
+            cmd_cpu_tune::get_nested_virt_state,
+            cmd_cpu_tune::set_nested_virt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
