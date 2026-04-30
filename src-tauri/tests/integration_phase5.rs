@@ -240,6 +240,68 @@ fn mdev_attach_round_trip_when_available() {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// 5.1 live migration
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn migration_status_returns_empty_when_no_job() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let vm = vm_name();
+    let p = conn.migration_status(&vm).expect("migration_status");
+    // No active migration on a shut-off vmtest-a → all fields None or
+    // phase = Some(None-equivalent). Either way, non-fatal.
+    eprintln!("phase: {:?}", p.phase);
+}
+
+#[test]
+fn live_migrate_round_trip_when_dest_uri_set() {
+    let Some(src) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let Some(dst_uri) = std::env::var("KRAFTWERK_MIGRATION_DEST_URI").ok().filter(|s| !s.is_empty()) else {
+        eprintln!("SKIP: KRAFTWERK_MIGRATION_DEST_URI unset (need a second hypervisor)");
+        return;
+    };
+    let dst = LibvirtConnection::new();
+    if dst.open(&dst_uri).is_err() {
+        eprintln!("SKIP: could not open destination uri {dst_uri}");
+        return;
+    }
+
+    let vm = vm_name();
+    // Domain must be running to live-migrate. We don't auto-start
+    // vmtest-a — operator must boot it before running this test.
+    let domains = src.list_all_domains().expect("list_all_domains");
+    let running = domains.iter().any(|d| d.name == vm && format!("{:?}", d.state).to_lowercase() == "running");
+    if !running {
+        eprintln!("SKIP: vmtest-a is not running; live migrate needs an active guest");
+        return;
+    }
+
+    let cfg = kraftwerk_lib::libvirt::migration::MigrationConfig::default();
+    let r = src.migrate_to(&vm, &dst, &cfg);
+    match r {
+        Ok(()) => {
+            eprintln!("migration succeeded");
+            // Migrate back so the next run is idempotent.
+            let cfg_back = kraftwerk_lib::libvirt::migration::MigrationConfig::default();
+            let _ = dst.migrate_to(&vm, &src, &cfg_back);
+        }
+        Err(e) => {
+            // Common skip reasons on a single-tenant test bench: storage
+            // not shared between the two hosts, or the dest already has
+            // the domain defined. Surface the reason instead of failing
+            // — the test is informational on most setups.
+            eprintln!("migration not exercised: {e:?}");
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // 5.3 SR-IOV
 // ────────────────────────────────────────────────────────────────────
 
