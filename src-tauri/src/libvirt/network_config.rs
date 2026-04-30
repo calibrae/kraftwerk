@@ -20,6 +20,18 @@ pub struct NetworkConfig {
     /// `<dns><host>` entries — local-resolver overrides for the network's
     /// dnsmasq.
     pub dns_hosts: Vec<DnsHost>,
+    /// Static routes pushed into the host's routing table for this
+    /// network (libvirt rewrites the host's iptables to honour them).
+    pub routes: Vec<NetworkRoute>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkRoute {
+    /// "ipv4" or "ipv6". Defaults to ipv4 when libvirt omits the attr.
+    pub family: String,
+    pub address: String,
+    pub prefix: u32,
+    pub gateway: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +236,18 @@ fn handle_start(
                 });
             }
         }
+        "route" if parent_is("network") => {
+            if let (Some(addr), Some(gw)) = (get_attr(attrs, "address"), get_attr(attrs, "gateway")) {
+                cfg.routes.push(NetworkRoute {
+                    family: get_attr(attrs, "family").unwrap_or("ipv4").to_string(),
+                    address: addr.to_string(),
+                    prefix: get_attr(attrs, "prefix")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0),
+                    gateway: gw.to_string(),
+                });
+            }
+        }
         "host" if parent_is("dns") && grandparent_is("network") => {
             // Started a <dns><host ip='...'> block; collect hostnames in
             // the corresponding handle_text entry.
@@ -279,6 +303,60 @@ pub fn build_dhcp_host_xml(mac: Option<&str>, name: Option<&str>, ip: &str) -> S
     }
     s.push_str(&format!(" ip='{}'/>", escape_xml(ip)));
     s
+}
+
+/// Build a `<route ...>` element for a network static route.
+pub fn build_route_xml(r: &NetworkRoute) -> String {
+    use crate::libvirt::xml_helpers::escape_xml;
+    format!(
+        "<route family='{}' address='{}' prefix='{}' gateway='{}'/>",
+        escape_xml(&r.family),
+        escape_xml(&r.address),
+        r.prefix,
+        escape_xml(&r.gateway),
+    )
+}
+
+/// Add a `<route .../>` element to a network XML, before `</network>`.
+/// libvirt has no virNetworkUpdate section for routes, so we rewrite
+/// and redefine.
+pub fn add_route_to_network_xml(xml: &str, route: &NetworkRoute) -> String {
+    let snippet = build_route_xml(route);
+    if let Some(idx) = xml.rfind("</network>") {
+        // Indent like the rest of the file's children — find the
+        // leading whitespace of the line containing </network>.
+        let line_start = xml[..idx].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        let indent = &xml[line_start..idx];
+        format!("{}{}{}\n{}{}", &xml[..line_start], indent, snippet, indent, &xml[idx..])
+    } else {
+        // Defensive fallback — should never happen on a real network XML.
+        format!("{xml}\n{snippet}")
+    }
+}
+
+/// Remove the first matching `<route>` element. Match is on
+/// (family, address, prefix, gateway) — close enough for human-managed
+/// routes; if duplicates exist we drop the first.
+pub fn remove_route_from_network_xml(xml: &str, route: &NetworkRoute) -> String {
+    // The single-line route element makes substring matching reliable.
+    let needle = build_route_xml(route);
+    if let Some(idx) = xml.find(&needle) {
+        // Trim any leading whitespace + trailing newline so we don't
+        // leave a blank gap.
+        let line_start = xml[..idx].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        let trail = idx + needle.len();
+        let trail_end = if xml[trail..].starts_with('\n') { trail + 1 } else { trail };
+        // Only swallow leading whitespace if the entire prefix on this
+        // line was just whitespace (i.e. the route is on its own line).
+        let line_prefix = &xml[line_start..idx];
+        let cut_start = if line_prefix.chars().all(|c| c.is_whitespace()) {
+            line_start
+        } else {
+            idx
+        };
+        return format!("{}{}", &xml[..cut_start], &xml[trail_end..]);
+    }
+    xml.to_string()
 }
 
 /// Build a `<host ip='...'><hostname>...</hostname></host>` snippet for
@@ -910,6 +988,59 @@ mod tests {
             xml,
             "<host ip='10.0.0.5'><hostname>primary</hostname><hostname>primary.lan</hostname></host>"
         );
+    }
+
+    // ── Static routes ──
+
+    #[test]
+    fn parses_static_routes_under_network() {
+        let xml = r#"<network>
+  <name>n</name>
+  <forward mode='route'/>
+  <ip address='192.168.222.1' netmask='255.255.255.0'/>
+  <route family='ipv4' address='10.0.0.0' prefix='8' gateway='192.168.222.5'/>
+  <route address='192.168.99.0' prefix='24' gateway='192.168.222.6'/>
+</network>"#;
+        let cfg = parse(xml).unwrap();
+        assert_eq!(cfg.routes.len(), 2);
+        assert_eq!(cfg.routes[0].family, "ipv4");
+        assert_eq!(cfg.routes[0].address, "10.0.0.0");
+        assert_eq!(cfg.routes[0].prefix, 8);
+        assert_eq!(cfg.routes[0].gateway, "192.168.222.5");
+        assert_eq!(cfg.routes[1].family, "ipv4"); // default
+    }
+
+    #[test]
+    fn add_route_inserts_before_close_tag() {
+        let xml = "<network>\n  <name>n</name>\n</network>\n";
+        let r = NetworkRoute {
+            family: "ipv4".into(),
+            address: "10.0.0.0".into(),
+            prefix: 8,
+            gateway: "192.168.122.1".into(),
+        };
+        let out = add_route_to_network_xml(xml, &r);
+        assert!(out.contains("<route family='ipv4' address='10.0.0.0' prefix='8' gateway='192.168.122.1'/>"));
+        // Order: name first, route second, close tag last.
+        let name_at = out.find("<name>").unwrap();
+        let route_at = out.find("<route").unwrap();
+        let close_at = out.find("</network>").unwrap();
+        assert!(name_at < route_at);
+        assert!(route_at < close_at);
+    }
+
+    #[test]
+    fn remove_route_removes_only_match() {
+        let xml = "<network>\n  <name>n</name>\n  <route family='ipv4' address='10.0.0.0' prefix='8' gateway='192.168.122.1'/>\n  <route family='ipv4' address='10.1.0.0' prefix='16' gateway='192.168.122.2'/>\n</network>\n";
+        let kill = NetworkRoute {
+            family: "ipv4".into(),
+            address: "10.0.0.0".into(),
+            prefix: 8,
+            gateway: "192.168.122.1".into(),
+        };
+        let out = remove_route_from_network_xml(xml, &kill);
+        assert!(!out.contains("10.0.0.0"));
+        assert!(out.contains("10.1.0.0"));
     }
 
     #[test]

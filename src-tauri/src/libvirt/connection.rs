@@ -2308,6 +2308,32 @@ impl LibvirtConnection {
         })
     }
 
+    /// Add a static `<route>` to a virtual network. libvirt has no
+    /// virNetworkUpdate section for routes, so we rewrite the XML and
+    /// redefine. Re-routing takes effect on the host immediately if the
+    /// network is active; libvirt re-applies the iptables rules.
+    pub fn add_network_route(
+        &self,
+        name: &str,
+        route: &crate::libvirt::network_config::NetworkRoute,
+    ) -> Result<(), VirtManagerError> {
+        let xml = self.get_network_xml(name)?;
+        let new_xml = crate::libvirt::network_config::add_route_to_network_xml(&xml, route);
+        self.define_network(&new_xml)
+    }
+
+    /// Remove a matching static `<route>` from a virtual network.
+    /// Match is on (family, address, prefix, gateway) — first hit wins.
+    pub fn remove_network_route(
+        &self,
+        name: &str,
+        route: &crate::libvirt::network_config::NetworkRoute,
+    ) -> Result<(), VirtManagerError> {
+        let xml = self.get_network_xml(name)?;
+        let new_xml = crate::libvirt::network_config::remove_route_from_network_xml(&xml, route);
+        self.define_network(&new_xml)
+    }
+
     /// Set the autostart flag for a network.
     pub fn set_network_autostart(&self, name: &str, autostart: bool) -> Result<(), VirtManagerError> {
         self.with_connection(|conn| {

@@ -18,6 +18,12 @@
   let dnsIp = $state("");
   let dnsHostnames = $state("");
 
+  // Route form
+  let routeFamily = $state("ipv4");
+  let routeAddress = $state("");
+  let routePrefix = $state(24);
+  let routeGateway = $state("");
+
   async function load() {
     if (!networkName) return;
     loading = true;
@@ -118,6 +124,43 @@
     }
   }
 
+  async function addRoute() {
+    if (!routeAddress.trim() || !routeGateway.trim()) {
+      err = "Address and gateway required"; return;
+    }
+    busy = true; err = null;
+    try {
+      await invoke("add_network_route", {
+        network: networkName,
+        family: routeFamily,
+        address: routeAddress.trim(),
+        prefix: Number(routePrefix),
+        gateway: routeGateway.trim(),
+      });
+      routeAddress = ""; routeGateway = ""; routePrefix = 24;
+      await load();
+    } catch (e) {
+      err = e?.message || String(e);
+    } finally { busy = false; }
+  }
+
+  async function removeRoute(r) {
+    if (!confirm(`Remove route ${r.address}/${r.prefix} via ${r.gateway}?`)) return;
+    busy = true; err = null;
+    try {
+      await invoke("remove_network_route", {
+        network: networkName,
+        family: r.family,
+        address: r.address,
+        prefix: r.prefix,
+        gateway: r.gateway,
+      });
+      await load();
+    } catch (e) {
+      err = e?.message || String(e);
+    } finally { busy = false; }
+  }
+
   let dhcpHosts = $derived.by(() => {
     const v4 = cfg?.ipv4?.dhcp_hosts ?? [];
     const v6 = cfg?.ipv6?.dhcp_hosts ?? [];
@@ -185,6 +228,40 @@
     Resolved by the network's local dnsmasq. Useful for naming guests
     that don't register themselves in DNS.
   </p>
+
+  <h4>Static Routes <span class="count">{cfg?.routes?.length ?? 0}</span></h4>
+  {#if (cfg?.routes ?? []).length === 0}
+    <p class="muted small">No routes.</p>
+  {:else}
+    <ul class="rows">
+      {#each cfg.routes as r (r.address + "/" + r.prefix)}
+        <li>
+          <code class="ip">{r.address}/{r.prefix}</code>
+          <span class="hostname">{r.family}</span>
+          <span class="muted small">via</span>
+          <code class="ip">{r.gateway}</code>
+          <span class="grow"></span>
+          <button class="btn-tiny danger" onclick={() => removeRoute(r)} disabled={busy}>Remove</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  <form class="add" onsubmit={(e) => { e.preventDefault(); addRoute(); }}>
+    <select bind:value={routeFamily} disabled={busy}>
+      <option value="ipv4">ipv4</option>
+      <option value="ipv6">ipv6</option>
+    </select>
+    <input type="text" bind:value={routeAddress} placeholder="destination network" disabled={busy} />
+    <input type="number" bind:value={routePrefix} min="0" max="128" placeholder="prefix" disabled={busy} />
+    <input type="text" bind:value={routeGateway} placeholder="gateway" disabled={busy} />
+    <button type="submit" class="btn-tiny primary" disabled={busy}>Add</button>
+  </form>
+  <p class="muted small">
+    Pushed into the host's routing table when the network is started;
+    libvirt rewrites iptables to allow forwarding through the bridge.
+    Adding/removing redefines the network — short outage on active nets.
+  </p>
 </section>
 
 <style>
@@ -227,7 +304,7 @@
   }
 
   form.add { display: flex; gap: 6px; flex-wrap: wrap; }
-  form.add input {
+  form.add input, form.add select {
     flex: 1; min-width: 160px;
     padding: 6px 10px;
     border: 1px solid var(--border);
@@ -237,6 +314,8 @@
     font-size: 12px;
     font-family: inherit;
   }
+  form.add select { flex: 0 0 auto; min-width: 80px; }
+  form.add input[type="number"] { flex: 0 0 80px; min-width: 80px; }
 
   .btn-tiny {
     padding: 4px 10px; font-size: 11px;

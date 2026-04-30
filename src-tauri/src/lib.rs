@@ -119,6 +119,8 @@ pub fn run() {
             network::remove_dhcp_host,
             network::add_dns_host,
             network::remove_dns_host,
+            network::add_network_route,
+            network::remove_network_route,
             // Storage
             storage::list_storage_pools,
             storage::get_pool_xml,

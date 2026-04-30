@@ -223,3 +223,33 @@ pub fn remove_dns_host(
     let snippet = crate::libvirt::network_config::build_dns_host_xml(&ip, &hostnames);
     state.libvirt().network_update_section(&network, 2, 10, &snippet)
 }
+
+#[tauri::command]
+pub fn add_network_route(
+    state: State<'_, AppState>,
+    network: String,
+    family: String,
+    address: String,
+    prefix: u32,
+    gateway: String,
+) -> Result<(), VirtManagerError> {
+    let route = crate::libvirt::network_config::NetworkRoute {
+        family, address, prefix, gateway,
+    };
+    state.libvirt().add_network_route(&network, &route)
+}
+
+#[tauri::command]
+pub fn remove_network_route(
+    state: State<'_, AppState>,
+    network: String,
+    family: String,
+    address: String,
+    prefix: u32,
+    gateway: String,
+) -> Result<(), VirtManagerError> {
+    let route = crate::libvirt::network_config::NetworkRoute {
+        family, address, prefix, gateway,
+    };
+    state.libvirt().remove_network_route(&network, &route)
+}
