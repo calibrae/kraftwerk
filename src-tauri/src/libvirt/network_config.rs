@@ -752,10 +752,10 @@ mod tests {
             forward_dev: None,
             domain_name: None,
             ipv4: Some(Ipv4BuildParams {
-                address: "10.10.0.1",
+                address: "192.0.2.1",
                 netmask: "255.255.255.0",
-                dhcp_start: Some("10.10.0.100"),
-                dhcp_end: Some("10.10.0.200"),
+                dhcp_start: Some("192.0.2.100"),
+                dhcp_end: Some("192.0.2.200"),
             }),
             ipv6: None,
         }
@@ -764,8 +764,8 @@ mod tests {
     #[test]
     fn builder_nat_matches_wrapper() {
         let a = build_network_xml(&nat_v4("n"));
-        let b = build_nat_network_xml("n", "virbr10", "10.10.0.1", "255.255.255.0",
-            Some("10.10.0.100"), Some("10.10.0.200"));
+        let b = build_nat_network_xml("n", "virbr10", "192.0.2.1", "255.255.255.0",
+            Some("192.0.2.100"), Some("192.0.2.200"));
         assert_eq!(a, b);
     }
 
@@ -776,7 +776,7 @@ mod tests {
         let xml = build_network_xml(&p);
         assert!(!xml.contains("<forward"), "isolated should have no <forward> element");
         assert!(xml.contains("<bridge name='virbr10'/>"));
-        assert!(xml.contains("<ip address='10.10.0.1'"));
+        assert!(xml.contains("<ip address='192.0.2.1'"));
     }
 
     #[test]
@@ -793,7 +793,7 @@ mod tests {
         p.forward_mode = "route";
         let xml = build_network_xml(&p);
         assert!(xml.contains("<forward mode='route'/>"));
-        assert!(xml.contains("<ip address='10.10.0.1'"));
+        assert!(xml.contains("<ip address='192.0.2.1'"));
     }
 
     #[test]
@@ -811,7 +811,7 @@ mod tests {
         p.forward_mode = "open";
         let xml = build_network_xml(&p);
         assert!(xml.contains("<forward mode='open'/>"));
-        assert!(xml.contains("<ip address='10.10.0.1'"));
+        assert!(xml.contains("<ip address='192.0.2.1'"));
     }
 
     #[test]
