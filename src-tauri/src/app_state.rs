@@ -156,6 +156,12 @@ impl AppState {
     /// the pool, returns it (idempotent re-connect). Otherwise creates a
     /// new LibvirtConnection, opens it against `uri`, and stores it.
     /// Sets the active id on success.
+    ///
+    /// Multiple connections can stay open at once — connecting to a new
+    /// id does not implicitly close any existing pool entry. Callers
+    /// must explicitly invoke `close_connection` to disconnect. This is
+    /// a prerequisite for live migration (need both source and target
+    /// open simultaneously).
     pub fn open_connection(&self, id: Uuid, uri: &str) -> Result<Arc<LibvirtConnection>, VirtManagerError> {
         let existing = self.connections.lock().unwrap().get(&id).cloned();
         let conn = match existing {
@@ -167,20 +173,23 @@ impl AppState {
                 c
             }
         };
-        // Phase 5.1 step 1: keep single-active UX for now. A later step
-        // will let multiple ids stay open simultaneously without each
-        // connect() implicitly closing the prior.
-        let prior = {
-            let mut g = self.active_id.lock().unwrap();
-            let prev = g.replace(id);
-            prev
-        };
-        if let Some(prev) = prior {
-            if prev != id {
-                self.close_connection_internal(&prev);
-            }
-        }
+        *self.active_id.lock().unwrap() = Some(id);
         Ok(conn)
+    }
+
+    /// Switch the active connection without opening a new one. Errors
+    /// when the requested id isn't already in the pool.
+    pub fn set_active_connection(&self, id: Uuid) -> Result<(), VirtManagerError> {
+        if !self.connections.lock().unwrap().contains_key(&id) {
+            return Err(VirtManagerError::NotConnected);
+        }
+        *self.active_id.lock().unwrap() = Some(id);
+        Ok(())
+    }
+
+    /// IDs of every connection currently open in the pool.
+    pub fn list_open_connections(&self) -> Vec<Uuid> {
+        self.connections.lock().unwrap().keys().copied().collect()
     }
 
     /// Close a specific connection by id. If it was the active one,
@@ -475,6 +484,30 @@ mod tests {
     fn console_not_active_by_default() {
         let state = AppState::new();
         assert!(!state.console_is_active());
+    }
+
+    #[test]
+    fn set_active_connection_rejects_unknown_id() {
+        let state = AppState::new();
+        let id = Uuid::new_v4();
+        let r = state.set_active_connection(id);
+        assert!(r.is_err(), "should reject unknown id");
+    }
+
+    #[test]
+    fn list_open_connections_starts_empty() {
+        let state = AppState::new();
+        assert!(state.list_open_connections().is_empty());
+        assert!(state.active_connection_id().is_none());
+    }
+
+    #[test]
+    fn libvirt_returns_null_when_no_active() {
+        let state = AppState::new();
+        let l = state.libvirt();
+        // null connection has no underlying virConnect — every method
+        // bottoms out in NotConnected.
+        assert!(l.list_all_domains().is_err());
     }
 
     #[test]

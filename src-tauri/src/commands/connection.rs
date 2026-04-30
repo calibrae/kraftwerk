@@ -112,6 +112,36 @@ pub fn disconnect(
     Ok(())
 }
 
+/// List the IDs of every connection currently open in the pool. The
+/// frontend uses this to render which saved connections have a live
+/// libvirt session and to enable multi-connection actions like live
+/// migration target picking.
+#[tauri::command]
+pub fn list_open_connections(state: State<'_, AppState>) -> Vec<String> {
+    state
+        .list_open_connections()
+        .into_iter()
+        .map(|u| u.to_string())
+        .collect()
+}
+
+/// Switch which open connection is the "active" one without opening a
+/// new session. Errors when the id isn't already in the pool.
+#[tauri::command]
+pub fn set_active_connection(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), VirtManagerError> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| VirtManagerError::ConnectionNotFound {
+        id: id.clone(),
+    })?;
+    state.set_active_connection(uuid)?;
+    if let Some(conn) = state.find_saved_connection(&uuid) {
+        state.set_current_uri(conn.uri);
+    }
+    Ok(())
+}
+
 /// Get the connection state for a saved connection.
 #[tauri::command]
 pub fn get_connection_state(

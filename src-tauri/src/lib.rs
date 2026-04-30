@@ -58,6 +58,8 @@ pub fn run() {
             connection::update_connection,
             connection::remove_connection,
             connection::list_saved_connections,
+            connection::list_open_connections,
+            connection::set_active_connection,
             connection::check_host_key,
             connection::accept_host_key,
             connection::forget_host_key,
