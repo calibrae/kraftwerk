@@ -3116,6 +3116,81 @@ impl LibvirtConnection {
         })
     }
 
+    /// Initiate a live migration of `name` from this connection (the
+    /// source) to `dest` (a separately-opened LibvirtConnection that
+    /// points at the destination libvirtd).
+    ///
+    /// virDomainMigrate is synchronous in libvirt's API — this call
+    /// blocks the calling thread for the entire transfer (potentially
+    /// minutes for big guests). To avoid wedging the rest of the app
+    /// behind the connection mutex while that runs, we clone both
+    /// `Connect` handles via virConnectRef (Connect's Clone impl) and
+    /// release the mutexes before issuing the migrate call. Other
+    /// commands — including `migration_status` polling on the same
+    /// source — can then proceed concurrently.
+    pub fn migrate_to(
+        &self,
+        name: &str,
+        dest: &LibvirtConnection,
+        cfg: &crate::libvirt::migration::MigrationConfig,
+    ) -> Result<(), VirtManagerError> {
+        use crate::libvirt::migration::migrate_err;
+
+        // Clone Connect refs while holding the mutexes briefly.
+        let src_conn = self.with_connection(|c| Ok(c.clone()))?;
+        let dst_conn = dest.with_connection(|c| Ok(c.clone()))?;
+
+        // Now operate on the cloned handles without holding either
+        // LibvirtConnection's internal mutex.
+        let domain = Domain::lookup_by_name(&src_conn, name)
+            .map_err(|_| VirtManagerError::DomainNotFound { name: name.into() })?;
+        domain
+            .migrate(&dst_conn, cfg.flags(), cfg.dest_name.as_deref(), cfg.dest_uri.as_deref(), cfg.bandwidth_mibs)
+            .map(|_| ())
+            .map_err(|e| migrate_err("migrate", e))
+    }
+
+    /// Read the current migration progress for a running domain. When
+    /// no migration is in flight, the returned `phase` is `None`.
+    pub fn migration_status(
+        &self,
+        name: &str,
+    ) -> Result<crate::libvirt::migration::MigrationProgress, VirtManagerError> {
+        use crate::libvirt::migration::MigrationProgress;
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            // 0 flags = current job (vs completed). When no job is
+            // running libvirt returns OPERATION_INVALID; map that to
+            // an empty progress rather than an error so polling code
+            // doesn't have to special-case it.
+            match domain.get_job_stats(0) {
+                Ok(s) => Ok(MigrationProgress::from_job_stats(s)),
+                Err(_) => Ok(MigrationProgress::default()),
+            }
+        })
+    }
+
+    /// Cancel the in-flight migration for `name`. Calls the raw
+    /// `virDomainAbortJob` because the safe wrapper in this crate
+    /// version doesn't expose it.
+    pub fn cancel_migration(&self, name: &str) -> Result<(), VirtManagerError> {
+        self.with_connection(|conn| {
+            let domain = Self::lookup_domain(conn, name)?;
+            // SAFETY: domain is a live virDomainPtr held by the safe
+            // wrapper for the duration of this closure; the FFI call
+            // returns a c_int which we map back to Rust's Result.
+            let rc = unsafe { virt::sys::virDomainAbortJob(domain.as_ptr()) };
+            if rc < 0 {
+                Err(VirtManagerError::OperationFailed {
+                    operation: "abortJob".into(),
+                    reason: virt::error::Error::last_error().to_string(),
+                })
+            } else {
+                Ok(())
+            }
+        })
+    }
+
     /// Apply a SEV launchSecurity block (or remove the existing one).
     /// `cfg = None` strips the block; persistent only — SEV is fixed at
     /// guest launch and cannot be hot-toggled. SEV-SNP / TDX writes are
