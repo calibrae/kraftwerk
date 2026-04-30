@@ -3191,6 +3191,105 @@ impl LibvirtConnection {
         Ok(new_name)
     }
 
+    /// Resolve the curated image catalog against a storage pool's
+    /// existing volumes — each entry comes back with `local_path`
+    /// populated when its filename is already present.
+    pub fn list_catalog_images(
+        &self,
+        pool_name: &str,
+    ) -> Result<Vec<crate::libvirt::image_catalog::CatalogImageStatus>, VirtManagerError> {
+        use crate::libvirt::image_catalog::{builtin_catalog, CatalogImageStatus};
+        let vols = self.list_volumes(pool_name)?;
+        let mut out = Vec::new();
+        for img in builtin_catalog() {
+            let hit = vols.iter().find(|v| v.name == img.filename);
+            let (local_path, local_size_bytes) = match hit {
+                Some(v) => (Some(v.path.clone()), Some(v.capacity)),
+                None => (None, None),
+            };
+            out.push(CatalogImageStatus { image: img, local_path, local_size_bytes });
+        }
+        Ok(out)
+    }
+
+    /// Download a catalog image into the named pool's target dir over
+    /// SSH. Uses curl on the hypervisor host. Refreshes the pool so
+    /// libvirt picks up the new volume on success.
+    pub fn download_catalog_image(
+        &self,
+        image_id: &str,
+        pool_name: &str,
+    ) -> Result<String, VirtManagerError> {
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+        use wait_timeout::ChildExt;
+
+        let img = crate::libvirt::image_catalog::find_image(image_id).ok_or_else(|| {
+            VirtManagerError::OperationFailed {
+                operation: "downloadImage".into(),
+                reason: format!("unknown catalog id {image_id}"),
+            }
+        })?;
+        let pool_cfg = self.get_pool_config(pool_name)?;
+        let pool_path = pool_cfg.target_path.ok_or_else(|| VirtManagerError::OperationFailed {
+            operation: "downloadImage".into(),
+            reason: format!("pool {pool_name} has no target path (only `dir` pools are supported here)"),
+        })?;
+        let dest = format!("{}/{}", pool_path.trim_end_matches('/'), img.filename);
+
+        let uri = self.uri()?;
+        let target = crate::libvirt::vnc_proxy::parse_ssh_target(&uri).ok_or_else(|| {
+            VirtManagerError::OperationFailed {
+                operation: "downloadImage".into(),
+                reason: "image download requires a qemu+ssh URI".into(),
+            }
+        })?;
+
+        // -fLsS = fail on HTTP errors, follow redirects, silent except errors.
+        // -o writes to a tmp file first; mv at the end to avoid a half-
+        // downloaded file appearing in the pool.
+        let cmd = format!(
+            "set -eu; tmp=$(mktemp '{dest}.XXXXXX'); curl -fLsS -o \"$tmp\" '{url}'; mv \"$tmp\" '{dest}'; echo OK",
+            dest = dest, url = img.url,
+        );
+        let mut child = Command::new("ssh")
+            .arg("-o").arg("BatchMode=yes")
+            .arg("-o").arg("ConnectTimeout=8")
+            .arg(&target)
+            .arg(&cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| VirtManagerError::OperationFailed {
+                operation: "downloadImageSpawn".into(),
+                reason: e.to_string(),
+            })?;
+        let status = child
+            .wait_timeout(Duration::from_secs(30 * 60)) // big images take a while
+            .map_err(|e| VirtManagerError::OperationFailed {
+                operation: "downloadImageWait".into(),
+                reason: e.to_string(),
+            })?
+            .ok_or_else(|| VirtManagerError::OperationFailed {
+                operation: "downloadImageWait".into(),
+                reason: "timed out (>30 min)".into(),
+            })?;
+        if !status.success() {
+            use std::io::Read;
+            let mut errbuf = String::new();
+            if let Some(mut s) = child.stderr.take() { let _ = s.read_to_string(&mut errbuf); }
+            return Err(VirtManagerError::OperationFailed {
+                operation: "downloadImage".into(),
+                reason: format!("ssh+curl failed: {}", errbuf.trim()),
+            });
+        }
+
+        // Make libvirt pick up the new volume.
+        let _ = self.refresh_pool(pool_name);
+        Ok(dest)
+    }
+
     /// Toggle the kraftwerk template marker on a domain. Persistent
     /// only; the marker is preserved across libvirt restarts because
     /// it lives in the domain's `<metadata>` block.

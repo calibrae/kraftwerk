@@ -65,6 +65,26 @@ fn template_flag_round_trip() {
 }
 
 #[test]
+fn list_catalog_images_against_default_pool() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let pools = conn.list_storage_pools().expect("list pools");
+    let dir_pool = pools
+        .iter()
+        .find(|p| p.is_active && p.pool_type == "dir");
+    let Some(pool) = dir_pool else {
+        eprintln!("SKIP: no active dir-type pool on host");
+        return;
+    };
+    let imgs = conn.list_catalog_images(&pool.name).expect("list catalog");
+    assert!(!imgs.is_empty(), "catalog must have entries");
+    let downloaded = imgs.iter().filter(|i| i.local_path.is_some()).count();
+    eprintln!("pool {} has {downloaded}/{} catalog entries downloaded", pool.name, imgs.len());
+}
+
+#[test]
 fn build_cloud_init_iso_when_tools_available() {
     let Some(conn) = connect() else {
         eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");

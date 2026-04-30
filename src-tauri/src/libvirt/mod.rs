@@ -15,6 +15,7 @@ pub mod vtpm;
 pub mod launch_security;
 pub mod migration;
 pub mod templates;
+pub mod image_catalog;
 pub mod secrets;
 pub mod host_info;
 pub mod domain_caps;

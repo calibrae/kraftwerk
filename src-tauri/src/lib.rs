@@ -28,6 +28,7 @@ use commands::snapshots as snap;
 use commands::launch_security as cmd_launch_sec;
 use commands::migration as cmd_migration;
 use commands::templates as cmd_templates;
+use commands::image_catalog as cmd_images;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -224,6 +225,9 @@ pub fn run() {
             cmd_templates::set_template_flag,
             cmd_templates::list_templates,
             cmd_templates::clone_from_template,
+            cmd_images::list_image_catalog,
+            cmd_images::list_image_catalog_for_pool,
+            cmd_images::download_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

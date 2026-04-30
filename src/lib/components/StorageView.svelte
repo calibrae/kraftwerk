@@ -1,5 +1,47 @@
 <script>
   import { getState, refreshPools, refreshVolumes, startPool, stopPool, deletePool, refreshPoolVolumes, setPoolAutostart, deleteVolume } from "$lib/stores/app.svelte.js";
+  import { invoke } from "@tauri-apps/api/core";
+
+  let catalog = $state([]);
+  let catalogLoading = $state(false);
+  let catalogPool = $state(null);
+  let downloading = $state(null);
+
+  async function refreshCatalog(poolName) {
+    if (!poolName) { catalog = []; return; }
+    catalogLoading = true;
+    catalogPool = poolName;
+    try {
+      catalog = await invoke("list_image_catalog_for_pool", { poolName });
+    } catch (e) {
+      console.warn("catalog fetch failed", e);
+      catalog = [];
+    } finally {
+      catalogLoading = false;
+    }
+  }
+
+  async function downloadImage(imageId) {
+    if (!catalogPool) return;
+    downloading = imageId;
+    try {
+      await invoke("download_image", { imageId, poolName: catalogPool });
+      await refreshCatalog(catalogPool);
+      await refreshPoolVolumes(catalogPool);
+    } catch (e) {
+      alert(`Download failed: ${e?.message ?? e}`);
+    } finally {
+      downloading = null;
+    }
+  }
+
+  function fmtSize(n) {
+    if (!n) return "?";
+    const u = ["B", "KiB", "MiB", "GiB"];
+    let v = Number(n), i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(v >= 100 ? 0 : 1)} ${u[i]}`;
+  }
 
   let { onCreatePool, onCreateVolume } = $props();
   const appState = getState();
@@ -51,6 +93,14 @@
   }
 
   let selected = $derived(selectedPool ? appState.pools.find(p => p.name === selectedPool) ?? null : null);
+  $effect(() => {
+    if (selected?.is_active && selected.pool_type === "dir") {
+      refreshCatalog(selected.name);
+    } else {
+      catalog = [];
+      catalogPool = null;
+    }
+  });
   let volumes = $derived(selectedPool ? (appState.volumesByPool[selectedPool] ?? []) : []);
 </script>
 
@@ -177,6 +227,48 @@
               </tbody>
             </table>
           {/if}
+
+          {#if selected.is_active && selected.pool_type === "dir"}
+            <h4>Cloud image catalog</h4>
+            {#if catalogLoading}
+              <p class="muted">Loading…</p>
+            {:else}
+              <table class="vol-table">
+                <thead>
+                  <tr><th>Distro</th><th>Filename</th><th>Size</th><th>Status</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {#each catalog as c (c.image.id)}
+                    <tr>
+                      <td>{c.image.label}</td>
+                      <td class="mono">{c.image.filename}</td>
+                      <td>{fmtSize(c.local_size_bytes ?? c.image.size_hint_bytes)}</td>
+                      <td>
+                        {#if c.local_path}
+                          <span class="downloaded">Downloaded</span>
+                        {:else}
+                          <span class="muted">Not downloaded</span>
+                        {/if}
+                      </td>
+                      <td class="row-actions">
+                        {#if !c.local_path}
+                          <button class="btn-tiny" disabled={downloading != null} onclick={() => downloadImage(c.image.id)}>
+                            {downloading === c.image.id ? "Downloading…" : "Download"}
+                          </button>
+                        {:else}
+                          <span class="muted small">{c.local_path}</span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+              <p class="muted small catalog-note">
+                Streams via SSH+curl on the hypervisor; no kraftwerk client traffic.
+                Files land in the pool's target dir, then libvirt is refreshed.
+              </p>
+            {/if}
+          {/if}
         </div>
       {/if}
     </div>
@@ -239,6 +331,9 @@
   .btn-tiny.start:hover { background: #047857; }
   .btn-tiny.danger { color: #fca5a5; }
   .btn-tiny.danger:hover { background: #7f1d1d; border-color: #7f1d1d; }
+
+  .downloaded { color: #34d399; font-weight: 600; font-size: 11px; }
+  .catalog-note { margin-top: 8px; }
 
   .detail { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
   .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
