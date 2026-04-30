@@ -65,13 +65,17 @@ Feature parity snapshot with Python virt-manager:
 | DHCP reservations + DNS hostname overrides on virtual networks | ✅ |
 | Static routes on virtual networks | ✅ |
 | Open vSwitch virtualport on NICs | ✅ |
-| Live migration | 🚧 phase 5 (needs multi-connection AppState refactor) |
-| SEV / SEV-SNP / TDX launch security | 🚧 phase 5 |
+| Live migration (peer-to-peer with auto-converge, bandwidth cap, persist/undefine flags) | ✅ |
+| Mediated devices (mdev / NVIDIA vGPU / vfio-mdev) | ✅ |
+| SR-IOV PF/VF enumeration (attach VFs via existing PCI passthrough) | ✅ |
+| Nested virtualization toggle (Intel vmx / AMD svm + host kernel module probe) | ✅ |
+| SEV / SEV-SNP / TDX launch security | ✅ (SEV writable, SEV-SNP/TDX read-only) |
+| vTPM persistent NVRAM path + backup snippets | ✅ |
 | OVA / OVF import | 🚧 phase 6 |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the multi-phase plan
 beyond per-domain config (events, snapshots, raw XML, hotplug were
-phases 1 + 2 + 3 + 4 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
+phases 1 + 2 + 3 + 4 + 5 — now done), and [docs/CONFIG_ROADMAP.md](docs/CONFIG_ROADMAP.md)
 for the full surface inventory with constraints and test expectations.
 
 ## Running it
