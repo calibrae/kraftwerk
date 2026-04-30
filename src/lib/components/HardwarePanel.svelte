@@ -15,6 +15,8 @@
 
   let hostPci = $state([]);
   let hostUsb = $state([]);
+  let hostMdevs = $state([]);
+  let mdevTypes = $state([]);
   let attached = $state([]);
   let loading = $state(true);
   let err = $state(null);
@@ -28,12 +30,15 @@
   async function reload() {
     loading = true; err = null;
     try {
-      const [p, u, a] = await Promise.all([
+      const [p, u, a, m, mt] = await Promise.all([
         invoke("list_host_pci_devices"),
         invoke("list_host_usb_devices"),
         invoke("list_domain_hostdevs", { name: vmName }),
+        invoke("list_host_mdevs").catch(() => []),
+        invoke("list_host_mdev_types").catch(() => []),
       ]);
       hostPci = p; hostUsb = u; attached = a;
+      hostMdevs = m; mdevTypes = mt;
     } catch (e) {
       err = e?.message || JSON.stringify(e);
     } finally {
@@ -151,7 +156,37 @@
     if (d.kind === "usb_vendor") {
       return `USB ${d.vendor_id.toString(16).padStart(4, "0")}:${d.product_id.toString(16).padStart(4, "0")}`;
     }
+    if (d.kind === "mdev") {
+      return `mdev ${d.uuid}${d.model ? ` (${d.model})` : ""}${d.display ? " · display" : ""}`;
+    }
     return `USB bus ${d.bus} device ${d.device}`;
+  }
+
+  function isAttachedMdev(m) {
+    return attached.some(a => a.kind === "mdev" && a.uuid === m.uuid);
+  }
+
+  async function attachMdev(mdev) {
+    busy = true; err = null;
+    try {
+      await invoke("attach_hostdev", {
+        name: vmName,
+        dev: {
+          kind: "mdev",
+          uuid: mdev.uuid,
+          model: "vfio-pci",
+          display: false,
+        },
+        live: isRunning && pickerApplyLive,
+        config: true,
+      });
+      pickerOpen = null;
+      await reload();
+    } catch (e) {
+      err = e?.message || JSON.stringify(e);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -168,6 +203,7 @@
         <div class="head-actions">
           <button class="btn" onclick={() => pickerOpen = "pci"} disabled={busy}>+ PCI</button>
           <button class="btn" onclick={() => pickerOpen = "usb"} disabled={busy}>+ USB</button>
+          <button class="btn" onclick={() => pickerOpen = "mdev"} disabled={busy || (hostMdevs.length === 0 && mdevTypes.length === 0)}>+ mdev</button>
           <button class="btn" onclick={reload} disabled={busy}>Refresh</button>
         </div>
       </div>
@@ -182,7 +218,7 @@
           <tbody>
             {#each attached as d, i (i)}
               <tr>
-                <td><span class="kind-badge {d.kind}">{d.kind === "pci" ? "PCI" : "USB"}</span></td>
+                <td><span class="kind-badge {d.kind}">{d.kind === "pci" ? "PCI" : d.kind === "mdev" ? "MDEV" : "USB"}</span></td>
                 <td class="mono">{describeAttached(d)}</td>
                 <td>{d.managed ? "yes" : "no"}</td>
                 <td class="row-actions">
@@ -299,6 +335,90 @@
   </div>
 {/if}
 
+<!-- ── mdev picker ─────────────────────────────────────────────────── -->
+{#if pickerOpen === "mdev"}
+  <div class="backdrop" onclick={() => pickerOpen = null} role="presentation">
+    <div class="dialog" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <h3>Select a mediated device</h3>
+      <div class="warn-banner">
+        Mediated devices (vGPU, vfio-mdev) are slices of a parent PCI device
+        that the host operator has pre-allocated. kraftwerk lists existing
+        instances and the available types per parent — creating new
+        instances is a host-side step (sysfs / <code>mdevctl</code>).
+      </div>
+
+      <div class="picker-list">
+        <h4 class="sub-h">Active mdev instances</h4>
+        {#if hostMdevs.length === 0}
+          <p class="muted">No active mdevs on the host.</p>
+        {:else}
+          <table>
+            <thead>
+              <tr><th>UUID</th><th>Type</th><th>Parent</th><th>IOMMU</th><th></th></tr>
+            </thead>
+            <tbody>
+              {#each hostMdevs as m}
+                {@const already = isAttachedMdev(m)}
+                <tr class:dim={already}>
+                  <td class="mono">{m.uuid}</td>
+                  <td class="mono">{m.type_id ?? "—"}</td>
+                  <td class="mono">{m.parent ?? "—"}</td>
+                  <td>{m.iommu_group ?? "—"}</td>
+                  <td class="row-actions">
+                    {#if already}
+                      <span class="muted">attached</span>
+                    {:else}
+                      <button class="btn-tiny" onclick={() => attachMdev(m)} disabled={busy}>Attach</button>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+
+        <h4 class="sub-h">Types advertised by host parents</h4>
+        {#if mdevTypes.length === 0}
+          <p class="muted">No mdev-capable parent devices on the host.</p>
+        {:else}
+          <table>
+            <thead>
+              <tr><th>Parent</th><th>Type</th><th>Name</th><th>API</th><th>Slots free</th></tr>
+            </thead>
+            <tbody>
+              {#each mdevTypes as t}
+                <tr>
+                  <td class="mono">{t.parent}</td>
+                  <td class="mono">{t.type_id}</td>
+                  <td>{t.name ?? "—"}</td>
+                  <td class="mono">{t.device_api ?? "—"}</td>
+                  <td>{t.available_instances ?? "?"}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <p class="muted small mdev-hint">
+            To create a new instance, on the hypervisor: <code>mdevctl start
+            -u $(uuidgen) -p &lt;parent&gt; -t &lt;type&gt;</code> (or echo a
+            UUID into <code>/sys/class/mdev_bus/&lt;parent&gt;/mdev_supported_types/&lt;type&gt;/create</code>).
+            Then click Refresh here.
+          </p>
+        {/if}
+      </div>
+
+      <div class="picker-foot">
+        {#if isRunning}
+          <label class="toggle">
+            <input type="checkbox" bind:checked={pickerApplyLive} />
+            <span>Apply to running VM now (live hot-plug)</span>
+          </label>
+        {/if}
+        <button class="btn" onclick={() => pickerOpen = null}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .hardware { display: flex; flex-direction: column; gap: 16px; }
   .muted { color: var(--text-muted); font-size: 13px; }
@@ -344,6 +464,13 @@
   }
   .kind-badge.pci { background: rgba(99,102,241,0.2); color: #a5b4fc; }
   .kind-badge.usb_vendor, .kind-badge.usb_address { background: rgba(16,185,129,0.2); color: #6ee7b7; }
+  .kind-badge.mdev { background: rgba(217,70,239,0.2); color: #f0abfc; }
+  .sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+           color: var(--text-muted); margin: 12px 0 6px; font-weight: 600; }
+  .sub-h:first-child { margin-top: 0; }
+  .small { font-size: 11px; }
+  .mdev-hint { margin-top: 8px; }
+  .mdev-hint code { background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; font-size: 10px; }
   .class-badge { background: var(--bg-button); color: var(--text-muted); }
 
   .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);

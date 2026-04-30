@@ -3,7 +3,7 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::libvirt::hostdev::{HostDevice, HostPciDevice, HostUsbDevice};
+use crate::libvirt::hostdev::{HostDevice, HostMdev, HostPciDevice, HostUsbDevice, MdevType};
 use crate::models::error::VirtManagerError;
 
 /// All PCI devices on the hypervisor host.
@@ -40,6 +40,20 @@ pub fn attach_hostdev(
     config: bool,
 ) -> Result<(), VirtManagerError> {
     state.libvirt().attach_hostdev(&name, &dev, live, config)
+}
+
+#[tauri::command]
+pub fn list_host_mdevs(
+    state: State<'_, AppState>,
+) -> Result<Vec<HostMdev>, VirtManagerError> {
+    state.libvirt().list_host_mdevs()
+}
+
+#[tauri::command]
+pub fn list_host_mdev_types(
+    state: State<'_, AppState>,
+) -> Result<Vec<MdevType>, VirtManagerError> {
+    state.libvirt().list_host_mdev_types()
 }
 
 #[tauri::command]

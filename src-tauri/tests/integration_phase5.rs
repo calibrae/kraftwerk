@@ -14,6 +14,7 @@
 //! the domain XML back to its starting state.
 
 use kraftwerk_lib::libvirt::connection::LibvirtConnection;
+use kraftwerk_lib::libvirt::hostdev::HostDevice;
 use kraftwerk_lib::libvirt::launch_security::{
     LaunchSecurityConfig, LaunchSecurityKind, LaunchSecurityKindWrap,
 };
@@ -173,6 +174,70 @@ fn launch_security_sev_round_trip_when_supported() {
 // ────────────────────────────────────────────────────────────────────
 // 5.6 vTPM info
 // ────────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────
+// 5.2 mdev / vGPU
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_host_mdev_paths_succeed() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    // Read paths must succeed even when the host has no mdevs / no vGPU
+    // hardware — list_all_node_devices returns an empty Vec, which we
+    // pass through as Ok([]).
+    let mdevs = conn.list_host_mdevs().expect("list_host_mdevs");
+    let types = conn.list_host_mdev_types().expect("list_host_mdev_types");
+    eprintln!("host has {} active mdevs, {} advertised types", mdevs.len(), types.len());
+    // Sanity: every advertised type has a non-empty parent + type_id.
+    for t in &types {
+        assert!(!t.parent.is_empty(), "mdev type missing parent: {t:?}");
+        assert!(!t.type_id.is_empty(), "mdev type missing id: {t:?}");
+    }
+    // Sanity: every active mdev has a uuid.
+    for m in &mdevs {
+        assert!(!m.uuid.is_empty(), "active mdev missing uuid: {m:?}");
+    }
+}
+
+#[test]
+fn mdev_attach_round_trip_when_available() {
+    let Some(conn) = connect() else {
+        eprintln!("SKIP: KRAFTWERK_RAM_TEST_URI unset");
+        return;
+    };
+    let mdevs = conn.list_host_mdevs().expect("list_host_mdevs");
+    let Some(m) = mdevs.into_iter().next() else {
+        eprintln!("SKIP: no mdev instances on host — test needs a pre-allocated mdev");
+        return;
+    };
+    let vm = vm_name();
+
+    let dev = HostDevice::Mdev {
+        uuid: m.uuid.clone(),
+        model: "vfio-pci".into(),
+        display: false,
+    };
+
+    // Attach persistent only; mdev hot-plug needs PCI bus space.
+    let attach_res = conn.attach_hostdev(&vm, &dev, false, true);
+    if attach_res.is_err() {
+        eprintln!("SKIP: attach failed (likely vmtest-a missing PCIe slots): {attach_res:?}");
+        return;
+    }
+
+    let after = conn.list_domain_hostdevs(&vm).expect("list domain hostdevs");
+    let found = after.iter().any(|d| matches!(d, HostDevice::Mdev { uuid, .. } if uuid == &m.uuid));
+    assert!(found, "attached mdev not found in domain hostdevs");
+
+    // Always detach to restore baseline.
+    let _ = conn.detach_hostdev(&vm, &dev, false, true);
+    let final_state = conn.list_domain_hostdevs(&vm).expect("list domain hostdevs after detach");
+    let still_there = final_state.iter().any(|d| matches!(d, HostDevice::Mdev { uuid, .. } if uuid == &m.uuid));
+    assert!(!still_there, "mdev still attached after detach");
+}
 
 #[test]
 fn vtpm_info_returns_uuid_and_path_when_emulator() {

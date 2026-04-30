@@ -157,6 +157,8 @@ pub fn run() {
             // Host device passthrough
             hostdev::list_host_pci_devices,
             hostdev::list_host_usb_devices,
+            hostdev::list_host_mdevs,
+            hostdev::list_host_mdev_types,
             hostdev::list_domain_hostdevs,
             hostdev::attach_hostdev,
             hostdev::detach_hostdev,

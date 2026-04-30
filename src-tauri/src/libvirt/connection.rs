@@ -3050,6 +3050,65 @@ impl LibvirtConnection {
         crate::libvirt::launch_security::parse_launch_security(&xml)
     }
 
+    /// Enumerate active mediated devices on the hypervisor host (vGPUs,
+    /// vfio-mdev). Each entry has the UUID needed to attach via
+    /// `<hostdev type='mdev'>`.
+    pub fn list_host_mdevs(&self)
+        -> Result<Vec<crate::libvirt::hostdev::HostMdev>, VirtManagerError>
+    {
+        use virt::sys::VIR_CONNECT_LIST_NODE_DEVICES_CAP_MDEV;
+        self.with_connection(|conn| {
+            let devs = conn
+                .list_all_node_devices(VIR_CONNECT_LIST_NODE_DEVICES_CAP_MDEV)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "listHostMdevs".into(),
+                    reason: e.to_string(),
+                })?;
+            let mut out = Vec::with_capacity(devs.len());
+            for d in &devs {
+                if let Ok(xml) = d.get_xml_desc(0) {
+                    if let Ok(parsed) = crate::libvirt::hostdev::parse_mdev_node_device(&xml) {
+                        out.push(parsed);
+                    }
+                }
+            }
+            out.sort_by(|a, b| a.uuid.cmp(&b.uuid));
+            Ok(out)
+        })
+    }
+
+    /// Enumerate mdev TYPE catalogs across the host. We hit every
+    /// node device that can host mdevs (libvirt's
+    /// `CAP_MDEV_TYPES` flag) and parse the `mdev_types` capability
+    /// out of its XML. Operators pick a type and create instances
+    /// out-of-band (sysfs / mdevctl) — kraftwerk surfaces the
+    /// catalog only.
+    pub fn list_host_mdev_types(&self)
+        -> Result<Vec<crate::libvirt::hostdev::MdevType>, VirtManagerError>
+    {
+        use virt::sys::VIR_CONNECT_LIST_NODE_DEVICES_CAP_MDEV_TYPES;
+        self.with_connection(|conn| {
+            let devs = conn
+                .list_all_node_devices(VIR_CONNECT_LIST_NODE_DEVICES_CAP_MDEV_TYPES)
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "listHostMdevTypes".into(),
+                    reason: e.to_string(),
+                })?;
+            let mut out = Vec::new();
+            for d in &devs {
+                let parent_name = d.get_name().unwrap_or_default();
+                if let Ok(xml) = d.get_xml_desc(0) {
+                    if let Ok(types) = crate::libvirt::hostdev::parse_mdev_types(&parent_name, &xml) {
+                        out.extend(types);
+                    }
+                }
+            }
+            out.sort_by(|a, b| (a.parent.as_str(), a.type_id.as_str())
+                .cmp(&(b.parent.as_str(), b.type_id.as_str())));
+            Ok(out)
+        })
+    }
+
     /// Apply a SEV launchSecurity block (or remove the existing one).
     /// `cfg = None` strips the block; persistent only — SEV is fixed at
     /// guest launch and cannot be hot-toggled. SEV-SNP / TDX writes are

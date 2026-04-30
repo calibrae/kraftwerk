@@ -79,6 +79,51 @@ pub enum HostDevice {
         product_id: u16,
         managed: bool,
     },
+    /// Mediated device (vGPU, vfio-mdev). Identified by the mdev
+    /// instance UUID. `model` is the deviceAPI: `vfio-pci` for vGPU,
+    /// `vfio-ccw` for IBM channel I/O, `vfio-ap` for s390 crypto.
+    /// mdev hostdevs are always managed='no' — libvirt doesn't drive
+    /// the mdev create/destroy lifecycle.
+    Mdev {
+        uuid: String,
+        /// `vfio-pci` | `vfio-ccw` | `vfio-ap`.
+        model: String,
+        /// `<hostdev display='on'>` — exposes the vGPU framebuffer to
+        /// the guest's graphics output (NVIDIA vGPU only).
+        display: bool,
+    },
+}
+
+/// A live mdev instance enumerated from the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostMdev {
+    /// libvirt name like `mdev_c2177883_f1bb_47f0_914d_32a22e3a8804`.
+    pub name: String,
+    /// Instance UUID (as the operator created it / referenced from XML).
+    pub uuid: String,
+    /// Parent node device name, e.g. `pci_0000_07_00_0`.
+    pub parent: Option<String>,
+    /// Type id (e.g. `nvidia-559`).
+    pub type_id: Option<String>,
+    /// IOMMU group number from the node device.
+    pub iommu_group: Option<u32>,
+}
+
+/// One mdev type advertised by a parent device. The operator picks
+/// one of these and creates an instance via the host's mdev framework
+/// (sysfs / mdevctl) — kraftwerk surfaces the catalog only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdevType {
+    /// Parent node-device name (e.g. `pci_0000_07_00_0`).
+    pub parent: String,
+    /// `nvidia-559`, `i915-GVTg_V5_8`, etc.
+    pub type_id: String,
+    /// Human-readable name when libvirt provides it (`GRID T4-2A`).
+    pub name: Option<String>,
+    /// `vfio-pci`, `vfio-ccw`, `vfio-ap`.
+    pub device_api: Option<String>,
+    /// Slots remaining on this parent device.
+    pub available_instances: Option<u32>,
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -276,6 +321,8 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
     let mut in_hostdev = false;
     let mut hd_type = String::new();
     let mut hd_managed = true;
+    let mut hd_model = String::new();
+    let mut hd_display = false;
     let mut pci_domain: Option<u16> = None;
     let mut pci_bus: Option<u8> = None;
     let mut pci_slot: Option<u8> = None;
@@ -284,6 +331,7 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
     let mut usb_device: Option<u8> = None;
     let mut usb_vendor: Option<u16> = None;
     let mut usb_product: Option<u16> = None;
+    let mut mdev_uuid: Option<String> = None;
 
     // Handle a <source>-child element (the only place hostdev data lives).
     // Called from both Start and Empty branches.
@@ -297,7 +345,8 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
                                    usb_bus: &mut Option<u8>,
                                    usb_device: &mut Option<u8>,
                                    usb_vendor: &mut Option<u16>,
-                                   usb_product: &mut Option<u16>| {
+                                   usb_product: &mut Option<u16>,
+                                   mdev_uuid: &mut Option<String>| {
         match (hd_type, name) {
             ("pci", "address") => {
                 *pci_domain = get_attr(a, "domain").and_then(parse_hex_u16);
@@ -315,6 +364,9 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
             ("usb", "product") => {
                 *usb_product = get_attr(a, "id").and_then(parse_hex_u16);
             }
+            ("mdev", "address") => {
+                *mdev_uuid = get_attr(a, "uuid");
+            }
             _ => {}
         }
     };
@@ -331,11 +383,14 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
                     in_hostdev = true;
                     hd_type = get_attr(&a, "type").unwrap_or_default();
                     hd_managed = get_attr(&a, "managed").as_deref() != Some("no");
+                    hd_model = get_attr(&a, "model").unwrap_or_default();
+                    hd_display = get_attr(&a, "display").as_deref() == Some("on");
                 }
                 if in_hostdev && path.last().map(String::as_str) == Some("source") {
                     handle_source_child(&n, &a, &hd_type,
                         &mut pci_domain, &mut pci_bus, &mut pci_slot, &mut pci_func,
-                        &mut usb_bus, &mut usb_device, &mut usb_vendor, &mut usb_product);
+                        &mut usb_bus, &mut usb_device, &mut usb_vendor, &mut usb_product,
+                        &mut mdev_uuid);
                 }
                 path.push(n);
             }
@@ -346,7 +401,8 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
                 if in_hostdev && path.last().map(String::as_str) == Some("source") {
                     handle_source_child(&n, &a, &hd_type,
                         &mut pci_domain, &mut pci_bus, &mut pci_slot, &mut pci_func,
-                        &mut usb_bus, &mut usb_device, &mut usb_vendor, &mut usb_product);
+                        &mut usb_bus, &mut usb_device, &mut usb_vendor, &mut usb_product,
+                        &mut mdev_uuid);
                 }
                 // Self-closing — do NOT push.
             }
@@ -376,13 +432,25 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
                                 });
                             }
                         }
+                        "mdev" => {
+                            if let Some(u) = mdev_uuid.take() {
+                                out.push(HostDevice::Mdev {
+                                    uuid: u,
+                                    model: hd_model.clone(),
+                                    display: hd_display,
+                                });
+                            }
+                        }
                         _ => {}
                     }
                     in_hostdev = false;
                     hd_type.clear();
+                    hd_model.clear();
                     hd_managed = true;
+                    hd_display = false;
                     pci_domain = None; pci_bus = None; pci_slot = None; pci_func = None;
                     usb_bus = None; usb_device = None; usb_vendor = None; usb_product = None;
+                    mdev_uuid = None;
                 }
                 path.pop();
             }
@@ -499,7 +567,161 @@ pub fn build_hostdev_xml(dev: &HostDevice) -> String {
                 vendor_id, product_id,
             )
         }
+        HostDevice::Mdev { uuid, model, display } => {
+            let model_attr = if model.is_empty() { String::new() } else { format!(" model='{}'", escape_xml(model)) };
+            let display_attr = if *display { " display='on'" } else { "" };
+            format!(
+                "<hostdev mode='subsystem' type='mdev' managed='no'{model_attr}{display_attr}>\n  <source>\n    <address uuid='{}'/>\n  </source>\n</hostdev>\n",
+                escape_xml(uuid),
+            )
+        }
     }
+}
+
+/// Parse a libvirt `nodedev-dumpxml` output for a `mdev` capability
+/// node device (i.e. an active mdev instance).
+pub fn parse_mdev_node_device(xml: &str) -> Result<HostMdev, VirtManagerError> {
+    let mut r = mk_reader(xml);
+    let mut name = String::new();
+    let mut parent: Option<String> = None;
+    let mut uuid = String::new();
+    let mut type_id: Option<String> = None;
+    let mut iommu_group: Option<u32> = None;
+
+    let mut buf = Vec::new();
+    let mut path: Vec<String> = Vec::new();
+    enum T { Name, Parent, Uuid }
+    let mut cap: Option<T> = None;
+
+    loop {
+        match r.read_event_into(&mut buf) {
+            Err(e) => return Err(xml_err(e, r.buffer_position())),
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                let n = utf8_name(&e);
+                let a = attrs(&e);
+                cap = match (path.last().map(String::as_str), n.as_str()) {
+                    (Some("device"), "name") => Some(T::Name),
+                    (Some("device"), "parent") => Some(T::Parent),
+                    (Some("capability"), "uuid") => Some(T::Uuid),
+                    _ => None,
+                };
+                if path.last().map(String::as_str) == Some("capability") && n == "type" {
+                    type_id = get_attr(&a, "id");
+                }
+                if path.last().map(String::as_str) == Some("capability") && n == "iommuGroup" {
+                    iommu_group = get_attr(&a, "number").and_then(|s| s.parse().ok());
+                }
+                path.push(n);
+            }
+            Ok(Event::Empty(e)) => {
+                let n = utf8_name(&e);
+                let a = attrs(&e);
+                if path.last().map(String::as_str) == Some("capability") && n == "type" {
+                    type_id = get_attr(&a, "id");
+                }
+                if path.last().map(String::as_str) == Some("capability") && n == "iommuGroup" {
+                    iommu_group = get_attr(&a, "number").and_then(|s| s.parse().ok());
+                }
+            }
+            Ok(Event::Text(t)) => {
+                let txt = t.unescape().unwrap_or_default().to_string();
+                match cap.take() {
+                    Some(T::Name) => name = txt,
+                    Some(T::Parent) => parent = Some(txt),
+                    Some(T::Uuid) => uuid = txt,
+                    None => {}
+                }
+            }
+            Ok(Event::End(_)) => { path.pop(); cap = None; }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if uuid.is_empty() {
+        return Err(VirtManagerError::XmlParsingFailed {
+            reason: "mdev node device missing <uuid>".into(),
+        });
+    }
+    Ok(HostMdev { name, uuid, parent, type_id, iommu_group })
+}
+
+/// Parse `mdev_types` capability from a parent device's nodedev XML.
+/// Returns the list of advertised types. The XML lives inside a
+/// `<capability type='mdev_types'>` block — most commonly nested under
+/// `<capability type='pci'>` for vGPU parents.
+pub fn parse_mdev_types(parent_name: &str, xml: &str) -> Result<Vec<MdevType>, VirtManagerError> {
+    let mut r = mk_reader(xml);
+    let mut buf = Vec::new();
+    let mut path: Vec<String> = Vec::new();
+    let mut in_mdev_types_cap = false;
+    let mut current: Option<MdevType> = None;
+    let mut out: Vec<MdevType> = Vec::new();
+
+    enum T { Name, DeviceApi, AvailableInstances }
+    let mut tt: Option<T> = None;
+
+    loop {
+        match r.read_event_into(&mut buf) {
+            Err(e) => return Err(xml_err(e, r.buffer_position())),
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                let n = utf8_name(&e);
+                let a = attrs(&e);
+                if n == "capability" && get_attr(&a, "type").as_deref() == Some("mdev_types") {
+                    in_mdev_types_cap = true;
+                }
+                if in_mdev_types_cap && n == "type" {
+                    current = Some(MdevType {
+                        parent: parent_name.to_string(),
+                        type_id: get_attr(&a, "id").unwrap_or_default(),
+                        name: None,
+                        device_api: None,
+                        available_instances: None,
+                    });
+                }
+                if in_mdev_types_cap && current.is_some() {
+                    tt = match n.as_str() {
+                        "name" => Some(T::Name),
+                        "deviceAPI" => Some(T::DeviceApi),
+                        "availableInstances" => Some(T::AvailableInstances),
+                        _ => None,
+                    };
+                }
+                path.push(n);
+            }
+            Ok(Event::Text(t)) => {
+                let txt = t.unescape().unwrap_or_default().to_string();
+                if let (Some(ref mut c), Some(target)) = (&mut current, tt.take()) {
+                    match target {
+                        T::Name => c.name = Some(txt),
+                        T::DeviceApi => c.device_api = Some(txt),
+                        T::AvailableInstances => c.available_instances = txt.trim().parse().ok(),
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let n = utf8_name_end(&e);
+                if n == "type" {
+                    if let Some(c) = current.take() {
+                        if !c.type_id.is_empty() { out.push(c); }
+                    }
+                }
+                if n == "capability" {
+                    // Close the mdev_types capability when we see *any*
+                    // capability close at the same depth — simple but safe
+                    // for libvirt's well-formed nodedev XML.
+                    in_mdev_types_cap = false;
+                }
+                path.pop();
+                tt = None;
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
 }
 
 /// Suppress unused — silence until we inline host-device names into XML comments.
@@ -706,5 +928,111 @@ mod tests {
         if let HostDevice::UsbVendor { vendor_id, product_id, .. } = parsed[0] {
             assert_eq!((vendor_id, product_id), (0x1a86, 0x7523));
         } else { panic!() }
+    }
+
+    #[test]
+    fn builds_mdev_hostdev_xml() {
+        let xml = build_hostdev_xml(&HostDevice::Mdev {
+            uuid: "c2177883-f1bb-47f0-914d-32a22e3a8804".into(),
+            model: "vfio-pci".into(),
+            display: true,
+        });
+        assert!(xml.contains("type='mdev'"));
+        assert!(xml.contains("managed='no'"));
+        assert!(xml.contains("model='vfio-pci'"));
+        assert!(xml.contains("display='on'"));
+        assert!(xml.contains("uuid='c2177883-f1bb-47f0-914d-32a22e3a8804'"));
+    }
+
+    #[test]
+    fn parses_mdev_hostdev_in_domain() {
+        let xml = r#"<domain><devices>
+            <hostdev mode='subsystem' type='mdev' managed='no' model='vfio-pci' display='on'>
+              <source>
+                <address uuid='c2177883-f1bb-47f0-914d-32a22e3a8804'/>
+              </source>
+            </hostdev>
+        </devices></domain>"#;
+        let devs = parse_hostdevs(xml).unwrap();
+        assert_eq!(devs.len(), 1);
+        match &devs[0] {
+            HostDevice::Mdev { uuid, model, display } => {
+                assert_eq!(uuid, "c2177883-f1bb-47f0-914d-32a22e3a8804");
+                assert_eq!(model, "vfio-pci");
+                assert!(*display);
+            }
+            _ => panic!("expected Mdev"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_mdev() {
+        let orig = HostDevice::Mdev {
+            uuid: "deadbeef-aaaa-bbbb-cccc-deadbeefcafe".into(),
+            model: "vfio-pci".into(),
+            display: false,
+        };
+        let xml = format!("<domain><devices>{}</devices></domain>", build_hostdev_xml(&orig));
+        let parsed = parse_hostdevs(&xml).unwrap();
+        if let HostDevice::Mdev { uuid, model, display } = &parsed[0] {
+            assert_eq!(uuid, "deadbeef-aaaa-bbbb-cccc-deadbeefcafe");
+            assert_eq!(model, "vfio-pci");
+            assert!(!*display);
+        } else { panic!() }
+    }
+
+    #[test]
+    fn parses_mdev_node_device_xml() {
+        let xml = r#"<device>
+  <name>mdev_c2177883_f1bb_47f0_914d_32a22e3a8804</name>
+  <parent>pci_0000_07_00_0</parent>
+  <capability type='mdev'>
+    <type id='nvidia-559'/>
+    <iommuGroup number='40'/>
+    <uuid>c2177883-f1bb-47f0-914d-32a22e3a8804</uuid>
+  </capability>
+</device>"#;
+        let m = parse_mdev_node_device(xml).unwrap();
+        assert_eq!(m.uuid, "c2177883-f1bb-47f0-914d-32a22e3a8804");
+        assert_eq!(m.parent.as_deref(), Some("pci_0000_07_00_0"));
+        assert_eq!(m.type_id.as_deref(), Some("nvidia-559"));
+        assert_eq!(m.iommu_group, Some(40));
+        assert_eq!(m.name, "mdev_c2177883_f1bb_47f0_914d_32a22e3a8804");
+    }
+
+    #[test]
+    fn parses_mdev_types_from_pci_parent() {
+        let xml = r#"<device>
+  <name>pci_0000_07_00_0</name>
+  <capability type='pci'>
+    <capability type='mdev_types'>
+      <type id='nvidia-559'>
+        <name>GRID T4-2A</name>
+        <deviceAPI>vfio-pci</deviceAPI>
+        <availableInstances>8</availableInstances>
+      </type>
+      <type id='nvidia-560'>
+        <name>GRID T4-4A</name>
+        <deviceAPI>vfio-pci</deviceAPI>
+        <availableInstances>4</availableInstances>
+      </type>
+    </capability>
+  </capability>
+</device>"#;
+        let types = parse_mdev_types("pci_0000_07_00_0", xml).unwrap();
+        assert_eq!(types.len(), 2);
+        assert_eq!(types[0].type_id, "nvidia-559");
+        assert_eq!(types[0].name.as_deref(), Some("GRID T4-2A"));
+        assert_eq!(types[0].device_api.as_deref(), Some("vfio-pci"));
+        assert_eq!(types[0].available_instances, Some(8));
+        assert_eq!(types[1].available_instances, Some(4));
+        assert_eq!(types[0].parent, "pci_0000_07_00_0");
+    }
+
+    #[test]
+    fn no_mdev_types_returns_empty() {
+        let xml = r#"<device><name>x</name><capability type='pci'/></device>"#;
+        let types = parse_mdev_types("x", xml).unwrap();
+        assert!(types.is_empty());
     }
 }
