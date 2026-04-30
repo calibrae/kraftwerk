@@ -29,6 +29,7 @@
   const IOMMU_MODELS = ["intel", "smmuv3", "virtio"];
 
   let snap = $state(null);
+  let vtpm = $state(null);
   let loading = $state(true);
   let err = $state(null);
   let busy = $state(false);
@@ -61,6 +62,11 @@
     loading = true; err = null;
     try {
       snap = await invoke("get_virtio_devices", { name: vmName });
+      try {
+        vtpm = await invoke("get_vtpm_info", { name: vmName });
+      } catch {
+        vtpm = null;
+      }
       tpmEnabled = !!snap.tpm;
       tpm = snap.tpm ?? { model: "tpm-crb", backend_model: "emulator", backend_version: "2.0", source_path: null };
       watchdogEnabled = !!snap.watchdog;
@@ -196,6 +202,44 @@
             </div>
           {/if}
           <div class="actions"><button class="btn btn-primary" onclick={saveTpm} disabled={busy}>Save TPM</button></div>
+
+          {#if vtpm?.state_path}
+            <div class="vtpm-state">
+              <div class="subhead">Persistent NVRAM (swtpm)</div>
+              <p class="muted">
+                Sealed keys, EK/SRK, BitLocker / LUKS unlock state live here. Files are
+                root-owned; backup and reset run out-of-band on the hypervisor.
+              </p>
+              <div class="kv">
+                <span>Path</span>
+                <code class="path">{vtpm.state_path}</code>
+                <button class="btn-tiny" onclick={() => navigator.clipboard.writeText(vtpm.state_path)}>Copy</button>
+              </div>
+              <div class="kv">
+                <span>On disk</span>
+                {#if vtpm.state_path_exists === true}
+                  <span class="ok">exists</span>
+                {:else if vtpm.state_path_exists === false}
+                  <span class="muted">not yet — appears on first boot with TPM enabled</span>
+                {:else}
+                  <span class="muted">unknown (couldn't probe host)</span>
+                {/if}
+              </div>
+              <details>
+                <summary>Backup / restore / reset commands</summary>
+                <div class="snippet-block">
+                  <div class="snippet-label">Backup (run on the hypervisor or via SSH)</div>
+                  <pre><code>sudo tar czf vtpm-{vtpm.uuid}.tar.gz -C / var/lib/libvirt/swtpm/{vtpm.uuid}</code></pre>
+                  <div class="snippet-label">Restore</div>
+                  <pre><code>sudo tar xzf vtpm-{vtpm.uuid}.tar.gz -C /</code></pre>
+                  <div class="snippet-label">Reset (clears all sealed keys — VM must be off)</div>
+                  <pre><code>sudo rm -rf {vtpm.state_path}</code></pre>
+                </div>
+              </details>
+            </div>
+          {:else if tpmEnabled && tpm?.backend_model !== "emulator"}
+            <p class="muted small">No persistent NVRAM: backend is <code>{tpm?.backend_model}</code>.</p>
+          {/if}
         </div>
       {/if}
     </section>
@@ -487,4 +531,22 @@
     background: var(--bg-button); color: var(--text); font-size: 13px; cursor: pointer; font-family: inherit; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .vtpm-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 6px; background: rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 8px; }
+  .vtpm-state .kv { display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap; }
+  .vtpm-state .kv > span:first-child { color: var(--text-muted); width: 70px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .vtpm-state code.path { font-family: 'SF Mono', monospace; font-size: 12px;
+    background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; }
+  .vtpm-state .ok { color: #34d399; font-weight: 600; }
+  .vtpm-state details { font-size: 13px; }
+  .vtpm-state summary { cursor: pointer; color: var(--text-muted); }
+  .vtpm-state .snippet-block { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .vtpm-state .snippet-label { font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .vtpm-state pre { margin: 0; padding: 8px 10px; background: rgba(0,0,0,0.3);
+    border-radius: 4px; overflow-x: auto; }
+  .vtpm-state pre code { font-family: 'SF Mono', monospace; font-size: 12px; }
+  .small { font-size: 12px; }
 </style>

@@ -173,6 +173,7 @@ pub fn run() {
             cmd_display::get_display_config,
             cmd_display::apply_display_patch,
             cmd_virtio::get_virtio_devices,
+            cmd_virtio::get_vtpm_info,
             cmd_virtio::set_tpm,
             cmd_virtio::set_watchdog,
             cmd_virtio::set_panic,

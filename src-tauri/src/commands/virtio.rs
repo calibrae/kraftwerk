@@ -18,6 +18,14 @@ pub fn get_virtio_devices(
 }
 
 #[tauri::command]
+pub fn get_vtpm_info(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<crate::libvirt::vtpm::VtpmInfo, VirtManagerError> {
+    state.libvirt().get_vtpm_info(&name)
+}
+
+#[tauri::command]
 pub fn set_tpm(
     state: State<'_, AppState>,
     name: String,

@@ -2471,6 +2471,86 @@ impl LibvirtConnection {
         })
     }
 
+    /// Resolve the vTPM persistent-state directory and probe whether
+    /// it exists on the hypervisor host. Pure read — never sudos.
+    pub fn get_vtpm_info(&self, name: &str) -> Result<crate::libvirt::vtpm::VtpmInfo, VirtManagerError> {
+        use crate::libvirt::{vtpm, virtio_devices};
+        let xml = self.get_domain_xml(name, true)?;
+        let uuid = self.with_connection(|conn| {
+            let d = Self::lookup_domain(conn, name)?;
+            d.get_uuid_string().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "domainGetUuid".into(),
+                reason: e.to_string(),
+            })
+        })?;
+        let tpm = virtio_devices::parse_tpm(&xml)?;
+        let state_path = tpm.as_ref().and_then(|t| {
+            if vtpm::has_persistent_state(t) {
+                Some(vtpm::swtpm_state_path(&uuid, t.backend_version.as_deref()))
+            } else {
+                None
+            }
+        });
+        let state_path_exists = match &state_path {
+            Some(p) => self.probe_remote_path(p).ok(),
+            None => None,
+        };
+        Ok(crate::libvirt::vtpm::VtpmInfo {
+            uuid,
+            tpm,
+            state_path,
+            state_path_exists,
+        })
+    }
+
+    /// SSH `test -d <path>` against the connection's host. Returns Ok(true)
+    /// when the directory exists, Ok(false) when missing. Errors when we
+    /// can't even reach the host. Local URIs probe the local filesystem.
+    fn probe_remote_path(&self, path: &str) -> Result<bool, VirtManagerError> {
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+        use wait_timeout::ChildExt;
+
+        let uri = self.uri()?;
+        if let Some(target) = crate::libvirt::vnc_proxy::parse_ssh_target(&uri) {
+            // Path is a libvirt-controlled prefix + uuid (hex+hyphens) +
+            // a literal subdir name. No metacharacters possible — single
+            // quoting belt-and-suspenders.
+            let remote_cmd = format!("test -d '{path}'");
+            let mut child = Command::new("ssh")
+                .arg("-o").arg("BatchMode=yes")
+                .arg("-o").arg("ConnectTimeout=5")
+                .arg("-o").arg("StrictHostKeyChecking=accept-new")
+                .arg(&target)
+                .arg(&remote_cmd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "vtpmProbeSsh".into(),
+                    reason: e.to_string(),
+                })?;
+            match child.wait_timeout(Duration::from_secs(8)) {
+                Ok(Some(s)) => Ok(s.success()),
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Err(VirtManagerError::OperationFailed {
+                        operation: "vtpmProbeSsh".into(),
+                        reason: "timed out".into(),
+                    })
+                }
+                Err(e) => Err(VirtManagerError::OperationFailed {
+                    operation: "vtpmProbeSsh".into(),
+                    reason: e.to_string(),
+                }),
+            }
+        } else {
+            Ok(std::path::Path::new(path).is_dir())
+        }
+    }
+
     /// List all nwfilters defined on the hypervisor — built-in libvirt
     /// filters (clean-traffic, no-mac-spoofing, no-ip-spoofing, allow-arp,
     /// no-arp-spoofing, etc.) plus any user-defined ones.
