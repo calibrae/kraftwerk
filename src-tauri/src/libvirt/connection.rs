@@ -1977,6 +1977,100 @@ impl LibvirtConnection {
         })
     }
 
+    // -- Secrets (libvirt-managed credentials, used for LUKS volumes,
+    //    Ceph, iSCSI CHAP, vTPM persistence, etc.) --
+
+    pub fn list_secrets(&self) -> Result<Vec<crate::libvirt::secrets::SecretInfo>, VirtManagerError> {
+        use virt::secret::Secret;
+        self.with_connection(|conn| {
+            let secrets = conn.list_all_secrets(0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "listAllSecrets".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            let mut out = Vec::with_capacity(secrets.len());
+            for sec in &secrets {
+                let xml = match sec.get_xml_desc(0) {
+                    Ok(x) => x,
+                    Err(_) => continue,
+                };
+                let mut info = match crate::libvirt::secrets::parse_secret_xml(&xml) {
+                    Some(i) => i,
+                    None => continue,
+                };
+                // has_value: getValue is the only way; if private=yes,
+                // libvirt refuses with VIR_ERR_INVALID_SECRET. Treat any
+                // success as "yes", any error as "unknown but assume yes
+                // since most secrets are populated immediately after define".
+                info.has_value = match Secret::lookup_by_uuid_string(conn, &info.uuid) {
+                    Ok(s) => s.get_value(0).is_ok(),
+                    Err(_) => false,
+                };
+                out.push(info);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn define_secret(
+        &self,
+        usage: crate::libvirt::secrets::SecretUsage,
+        usage_id: Option<&str>,
+        description: Option<&str>,
+        ephemeral: bool,
+        private: bool,
+    ) -> Result<String, VirtManagerError> {
+        use virt::secret::Secret;
+        let xml = crate::libvirt::secrets::build_secret_xml(
+            usage, usage_id, description, ephemeral, private,
+        );
+        self.with_connection(|conn| {
+            let sec = Secret::define_xml(conn, &xml, 0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "secretDefineXML".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            sec.get_uuid_string().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "secretGetUuid".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    pub fn set_secret_value(&self, uuid: &str, value: &[u8]) -> Result<(), VirtManagerError> {
+        use virt::secret::Secret;
+        self.with_connection(|conn| {
+            let sec = Secret::lookup_by_uuid_string(conn, uuid).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "secretLookup".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            sec.set_value(value, 0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "secretSetValue".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    pub fn delete_secret(&self, uuid: &str) -> Result<(), VirtManagerError> {
+        use virt::secret::Secret;
+        self.with_connection(|conn| {
+            let sec = Secret::lookup_by_uuid_string(conn, uuid).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "secretLookup".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            sec.undefine().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "secretUndefine".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     // -- Network Management --
 
     /// List all virtual networks on the hypervisor.

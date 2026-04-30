@@ -1,5 +1,8 @@
 <script>
-  import { createVolume } from "$lib/stores/app.svelte.js";
+  import { invoke } from "@tauri-apps/api/core";
+  import { createVolume, getState } from "$lib/stores/app.svelte.js";
+
+  const appState = getState();
 
   let { open = $bindable(false), poolName = "" } = $props();
 
@@ -10,9 +13,16 @@
   let busy = $state(false);
   let err = $state(null);
 
+  // LUKS state — only available for qcow2 (raw can be LUKS too at the
+  // device layer, but we keep the v1 surface simple).
+  let encryptLuks = $state(false);
+  let passphrase = $state("");
+  let showPass = $state(false);
+
   function reset() {
     name = "disk.qcow2"; capacityGb = 20;
     format = "qcow2"; thinProvision = true;
+    encryptLuks = false; passphrase = ""; showPass = false;
     busy = false; err = null;
   }
   function close() { open = false; reset(); }
@@ -28,15 +38,39 @@
   async function submit(e) {
     e.preventDefault();
     if (!name.trim() || !poolName || capacityGb <= 0) return;
+    if (encryptLuks && !passphrase) {
+      err = "LUKS passphrase required";
+      return;
+    }
     busy = true; err = null;
     try {
       const bytes = Math.floor(capacityGb * 1024 * 1024 * 1024);
+      let luksUuid = null;
+      if (encryptLuks) {
+        // Predict the path the new volume will take so the secret's
+        // usage_id matches what libvirt computes.
+        const pool = (appState.pools ?? []).find(p => p.name === poolName);
+        const targetPath = pool?.target_path
+          ? `${pool.target_path.replace(/\/$/, "")}/${name.trim()}`
+          : null;
+        luksUuid = await invoke("define_secret", {
+          req: {
+            usage: targetPath ? "volume" : "none",
+            usage_id: targetPath,
+            description: `LUKS for ${name.trim()}`,
+            ephemeral: false,
+            private: true,
+            value: passphrase,
+          },
+        });
+      }
       await createVolume({
         pool_name: poolName,
         name: name.trim(),
         capacity_bytes: bytes,
         format,
         allocation_bytes: thinProvision ? null : bytes,
+        luks_secret_uuid: luksUuid,
       });
       close();
     } catch (ex) {
@@ -78,6 +112,30 @@
           </label>
         {/if}
 
+        {#if format === "qcow2"}
+          <label class="toggle">
+            <input type="checkbox" bind:checked={encryptLuks} />
+            <span>Encrypt with LUKS</span>
+          </label>
+          {#if encryptLuks}
+            <label>
+              <span>Passphrase</span>
+              <div class="row">
+                <input type={showPass ? "text" : "password"} bind:value={passphrase} autocomplete="new-password" />
+                <button type="button" class="btn-link" onclick={() => showPass = !showPass}>
+                  {showPass ? "hide" : "show"}
+                </button>
+              </div>
+            </label>
+            <p class="hint">
+              The passphrase is stored as a libvirt secret marked
+              <code>private</code> — it can't be read back via API. If you
+              lose it the volume's data is unrecoverable. Use a password
+              manager.
+            </p>
+          {/if}
+        {/if}
+
         {#if err}<div class="error">{err}</div>{/if}
 
         <div class="actions">
@@ -114,6 +172,19 @@
 
   .error { padding: 8px 12px; background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; color: #ef4444; font-size: 12px; }
+
+  .row { display: flex; gap: 6px; align-items: stretch; }
+  .row input { flex: 1; }
+  .btn-link {
+    border: 1px solid var(--border);
+    background: var(--bg-button); color: var(--text-muted);
+    padding: 0 10px; border-radius: 6px; font-size: 11px;
+    font-family: inherit; cursor: pointer;
+  }
+  .btn-link:hover { color: var(--text); background: var(--bg-hover); }
+
+  .hint { font-size: 11px; color: var(--text-muted); margin: -6px 0 0; }
+  .hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg-input); padding: 1px 4px; border-radius: 3px; }
 
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
   .btn-cancel, .btn-primary { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-family: inherit; cursor: pointer; }

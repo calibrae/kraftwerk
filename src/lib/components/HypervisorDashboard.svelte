@@ -10,6 +10,41 @@
   let err = $state(null);
   let timer = null;
 
+  // Secrets section
+  let secrets = $state([]);
+  let secretsBusy = $state(false);
+  let secretsErr = $state(null);
+  let armedDelete = $state(null);
+  let armTimer = null;
+
+  async function loadSecrets() {
+    secretsBusy = true;
+    secretsErr = null;
+    try {
+      secrets = await invoke("list_secrets");
+    } catch (e) {
+      secretsErr = e?.message || String(e);
+    } finally {
+      secretsBusy = false;
+    }
+  }
+
+  function maybeDeleteSecret(uuid) {
+    if (armedDelete !== uuid) {
+      armedDelete = uuid;
+      if (armTimer) clearTimeout(armTimer);
+      armTimer = setTimeout(() => armedDelete = null, 5000);
+      return;
+    }
+    armedDelete = null;
+    secretsBusy = true;
+    secretsErr = null;
+    invoke("delete_secret", { uuid })
+      .then(loadSecrets)
+      .catch(e => { secretsErr = e?.message || String(e); })
+      .finally(() => { secretsBusy = false; });
+  }
+
   async function loadHost() {
     try {
       host = await invoke("get_host_info");
@@ -29,6 +64,7 @@
   onMount(async () => {
     await loadHost();
     await loadMem();
+    await loadSecrets();
     timer = setInterval(loadMem, 5000);
   });
 
@@ -166,6 +202,45 @@
         </ul>
       {/if}
     </section>
+
+    <!-- Secrets card (full width) -->
+    <section class="card wide">
+      <h2>
+        Secrets <span class="count">{secrets.length}</span>
+        <button class="btn-tiny" onclick={loadSecrets} disabled={secretsBusy}>
+          {secretsBusy ? "…" : "Refresh"}
+        </button>
+      </h2>
+      {#if secretsErr}
+        <pre class="err">{secretsErr}</pre>
+      {/if}
+      {#if secrets.length === 0}
+        <p class="muted small">No secrets defined. LUKS volumes auto-create them on first encrypt.</p>
+      {:else}
+        <ul class="secrets">
+          {#each secrets as s (s.uuid)}
+            <li>
+              <span class="mono small">{s.uuid.slice(0, 8)}…</span>
+              <span class="usage-pill">{s.usage}</span>
+              {#if s.usage_id}
+                <span class="muted small mono">{s.usage_id}</span>
+              {/if}
+              {#if s.description}
+                <span class="muted small">{s.description}</span>
+              {/if}
+              <span class="grow"></span>
+              {#if !s.has_value}<span class="warn-pill">no value</span>{/if}
+              {#if s.private}<span class="usage-pill">private</span>{/if}
+              <button class="btn-tiny danger"
+                class:armed={armedDelete === s.uuid}
+                onclick={() => maybeDeleteSecret(s.uuid)} disabled={secretsBusy}>
+                {armedDelete === s.uuid ? "Confirm" : "Delete"}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
   </div>
 </div>
 
@@ -262,6 +337,69 @@
     transition: width 0.4s ease;
   }
   .bar-label { display: flex; justify-content: space-between; font-size: 12px; }
+
+  ul.secrets {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  ul.secrets li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 4px;
+  }
+  ul.secrets li:hover { background: var(--bg-hover); }
+  .usage-pill {
+    font-size: 10px;
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .warn-pill {
+    font-size: 10px;
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .btn-tiny {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-button);
+    color: var(--text);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .btn-tiny:hover:not(:disabled) { background: var(--bg-hover); }
+  .btn-tiny:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-tiny.danger { color: #ef4444; }
+  .btn-tiny.danger.armed {
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
+    border-color: #ef4444;
+    font-weight: 500;
+  }
+  pre.err {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.30);
+    border-radius: 4px;
+    color: #ef4444;
+    font-size: 11px;
+    white-space: pre-wrap;
+  }
 
   .error {
     margin-bottom: 12px;

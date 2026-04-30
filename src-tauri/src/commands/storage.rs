@@ -31,6 +31,12 @@ pub struct CreateVolumeRequest {
     /// "qcow2" | "raw" | "iso"
     pub format: String,
     pub allocation_bytes: Option<u64>,
+    /// When set, the volume is created as a LUKS container referencing
+    /// this existing secret UUID. The secret must already have its
+    /// passphrase set via set_secret_value before create_volume runs;
+    /// libvirt uses it to initialise the LUKS header.
+    #[serde(default)]
+    pub luks_secret_uuid: Option<String>,
 }
 
 fn default_true() -> bool { true }
@@ -133,13 +139,90 @@ pub fn create_volume(
     state: State<'_, AppState>,
     req: CreateVolumeRequest,
 ) -> Result<String, VirtManagerError> {
-    let xml = storage_config::build_volume_xml(&VolumeBuildParams {
-        name: &req.name,
-        capacity_bytes: req.capacity_bytes,
-        format: &req.format,
-        allocation_bytes: req.allocation_bytes,
-    });
+    let xml = if let Some(uuid) = req.luks_secret_uuid.as_deref().filter(|s| !s.is_empty()) {
+        // LUKS bypasses the regular builder — capacity+name+secret-ref only.
+        crate::libvirt::secrets::build_luks_volume_xml(&req.name, req.capacity_bytes, uuid)
+    } else {
+        storage_config::build_volume_xml(&VolumeBuildParams {
+            name: &req.name,
+            capacity_bytes: req.capacity_bytes,
+            format: &req.format,
+            allocation_bytes: req.allocation_bytes,
+        })
+    };
     state.libvirt().create_volume(&req.pool_name, &xml)
+}
+
+// ── Secret (libvirt-managed credential) commands ──
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DefineSecretRequest {
+    /// "none" | "volume" | "ceph" | "iscsi" | "tls" | "vtpm"
+    pub usage: String,
+    pub usage_id: Option<String>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub ephemeral: bool,
+    #[serde(default = "default_true")]
+    pub private: bool,
+    /// Optional passphrase / token. If provided, set_secret_value is
+    /// called immediately after define so the caller doesn't have to
+    /// round-trip.
+    pub value: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_secrets(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::libvirt::secrets::SecretInfo>, VirtManagerError> {
+    state.libvirt().list_secrets()
+}
+
+#[tauri::command]
+pub fn define_secret(
+    state: State<'_, AppState>,
+    req: DefineSecretRequest,
+) -> Result<String, VirtManagerError> {
+    let usage = match req.usage.as_str() {
+        "none" => crate::libvirt::secrets::SecretUsage::None,
+        "volume" => crate::libvirt::secrets::SecretUsage::Volume,
+        "ceph" => crate::libvirt::secrets::SecretUsage::Ceph,
+        "iscsi" => crate::libvirt::secrets::SecretUsage::Iscsi,
+        "tls" => crate::libvirt::secrets::SecretUsage::Tls,
+        "vtpm" => crate::libvirt::secrets::SecretUsage::Vtpm,
+        _ => return Err(VirtManagerError::OperationFailed {
+            operation: "defineSecret".into(),
+            reason: format!("unsupported usage type {:?}", req.usage),
+        }),
+    };
+    let uuid = state.libvirt().define_secret(
+        usage,
+        req.usage_id.as_deref(),
+        req.description.as_deref(),
+        req.ephemeral,
+        req.private,
+    )?;
+    if let Some(v) = req.value.as_deref() {
+        state.libvirt().set_secret_value(&uuid, v.as_bytes())?;
+    }
+    Ok(uuid)
+}
+
+#[tauri::command]
+pub fn set_secret_value(
+    state: State<'_, AppState>,
+    uuid: String,
+    value: String,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().set_secret_value(&uuid, value.as_bytes())
+}
+
+#[tauri::command]
+pub fn delete_secret(
+    state: State<'_, AppState>,
+    uuid: String,
+) -> Result<(), VirtManagerError> {
+    state.libvirt().delete_secret(&uuid)
 }
 
 #[tauri::command]

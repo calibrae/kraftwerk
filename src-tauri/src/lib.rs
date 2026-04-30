@@ -129,6 +129,10 @@ pub fn run() {
             storage::create_volume,
             storage::delete_volume,
             storage::resize_volume,
+            storage::list_secrets,
+            storage::define_secret,
+            storage::set_secret_value,
+            storage::delete_secret,
             // VM creation
             vm_creation::list_os_variants,
             vm_creation::create_vm,
