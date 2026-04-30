@@ -1,5 +1,5 @@
-use serde::Deserialize;
-use tauri::State;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_state::AppState;
 use crate::libvirt::storage_config::{self, PoolBuildParams, VolumeBuildParams};
@@ -283,4 +283,50 @@ pub fn resize_volume(
     capacity_bytes: u64,
 ) -> Result<(), VirtManagerError> {
     state.libvirt().resize_volume(&path, capacity_bytes)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VolumeUploadProgress {
+    pub pool_name: String,
+    pub vol_name: String,
+    pub sent: u64,
+    pub total: u64,
+}
+
+/// Stream a local file's contents into an existing volume. The volume
+/// is identified by (pool_name, vol_name) — call create_volume first.
+/// Progress events fire on the `volume_upload_progress` Tauri channel
+/// throttled to ~5/sec so the webview doesn't drown.
+#[tauri::command]
+pub fn upload_volume(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    pool_name: String,
+    vol_name: String,
+    source_path: String,
+) -> Result<u64, VirtManagerError> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    let last = Mutex::new(Instant::now() - Duration::from_secs(1));
+    let pool_for_cb = pool_name.clone();
+    let vol_for_cb = vol_name.clone();
+    state.libvirt().upload_volume_from_path(
+        &pool_name,
+        &vol_name,
+        &source_path,
+        1024 * 1024,
+        |sent, total| {
+            let mut l = match last.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+            let now = Instant::now();
+            if now.duration_since(*l) >= Duration::from_millis(200) || sent == 0 || sent == total {
+                *l = now;
+                let _ = app.emit("volume_upload_progress", VolumeUploadProgress {
+                    pool_name: pool_for_cb.clone(),
+                    vol_name: vol_for_cb.clone(),
+                    sent,
+                    total,
+                });
+            }
+        },
+    )
 }

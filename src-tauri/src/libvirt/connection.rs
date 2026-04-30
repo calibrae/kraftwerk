@@ -1977,6 +1977,96 @@ impl LibvirtConnection {
         })
     }
 
+    /// Upload a local file's contents into an existing storage volume
+    /// over libvirt's stream RPC. The volume must already exist (use
+    /// create_volume first); upload only writes bytes, it doesn't
+    /// allocate. Calls the supplied progress callback after each chunk.
+    ///
+    /// `chunk_size` is bytes-per-iteration. 1 MiB is a reasonable
+    /// default; larger means fewer round-trips but coarser progress.
+    pub fn upload_volume_from_path(
+        &self,
+        pool_name: &str,
+        vol_name: &str,
+        source_path: &str,
+        chunk_size: usize,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<u64, VirtManagerError> {
+        use std::io::Read;
+        use virt::storage_pool::StoragePool;
+        use virt::storage_vol::StorageVol;
+        use virt::stream::Stream;
+        let chunk_size = chunk_size.max(64 * 1024).min(16 * 1024 * 1024);
+        let path = source_path.to_string();
+        let metadata = std::fs::metadata(&path).map_err(|e| VirtManagerError::OperationFailed {
+            operation: "uploadVolumeStat".into(),
+            reason: format!("{path}: {e}"),
+        })?;
+        let total = metadata.len();
+        let mut file = std::fs::File::open(&path).map_err(|e| VirtManagerError::OperationFailed {
+            operation: "uploadVolumeOpen".into(),
+            reason: format!("{path}: {e}"),
+        })?;
+        self.with_connection(|conn| {
+            let pool = StoragePool::lookup_by_name(conn, pool_name).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "uploadVolumeLookupPool".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            let vol = StorageVol::lookup_by_name(&pool, vol_name).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "uploadVolumeLookupVol".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            let stream = Stream::new(conn, 0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "uploadVolumeStream".into(),
+                reason: e.to_string(),
+            })?;
+            vol.upload(&stream, 0, total, 0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "uploadVolumeAttach".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+
+            let mut buf = vec![0u8; chunk_size];
+            let mut sent: u64 = 0;
+            on_progress(0, total);
+            loop {
+                let n = file.read(&mut buf).map_err(|e| VirtManagerError::OperationFailed {
+                    operation: "uploadVolumeRead".into(),
+                    reason: e.to_string(),
+                })?;
+                if n == 0 { break; }
+                let mut offset = 0;
+                while offset < n {
+                    let written = stream.send(&buf[offset..n]).map_err(|e| {
+                        VirtManagerError::OperationFailed {
+                            operation: "streamSend".into(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    if written < 0 {
+                        return Err(VirtManagerError::OperationFailed {
+                            operation: "streamSend".into(),
+                            reason: format!("negative return {written}"),
+                        });
+                    }
+                    offset += written as usize;
+                }
+                sent += n as u64;
+                on_progress(sent, total);
+            }
+            stream.finish().map_err(|e| VirtManagerError::OperationFailed {
+                operation: "streamFinish".into(),
+                reason: e.to_string(),
+            })?;
+            Ok(sent)
+        })
+    }
+
     // -- Secrets (libvirt-managed credentials, used for LUKS volumes,
     //    Ceph, iSCSI CHAP, vTPM persistence, etc.) --
 

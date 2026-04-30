@@ -129,6 +129,7 @@ pub fn run() {
             storage::create_volume,
             storage::delete_volume,
             storage::resize_volume,
+            storage::upload_volume,
             storage::list_secrets,
             storage::define_secret,
             storage::set_secret_value,

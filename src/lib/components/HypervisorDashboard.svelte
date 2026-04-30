@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
   import { getState } from "$lib/stores/app.svelte.js";
 
@@ -9,6 +10,77 @@
   let mem = $state(null);
   let err = $state(null);
   let timer = null;
+
+  // Upload-to-pool state — only one upload at a time on this dashboard
+  // since the pool list is shared.
+  let uploadOpen = $state(false);
+  let uploadPool = $state("");
+  let uploadVol = $state("");
+  let uploadSourcePath = $state("");
+  let uploadCapacityGb = $state(8);
+  let uploadFormat = $state("raw");
+  let uploadProgress = $state(null); // { sent, total }
+  let uploadBusy = $state(false);
+  let uploadErr = $state(null);
+  let uploadUnlisten = null;
+
+  function openUpload(pool) {
+    uploadOpen = true;
+    uploadPool = pool;
+    uploadVol = "";
+    uploadSourcePath = "";
+    uploadCapacityGb = 8;
+    uploadFormat = "raw";
+    uploadProgress = null;
+    uploadErr = null;
+  }
+  function closeUpload() {
+    if (uploadBusy) return;
+    uploadOpen = false;
+  }
+
+  async function doUpload() {
+    if (!uploadPool || !uploadVol.trim() || !uploadSourcePath.trim()) {
+      uploadErr = "Pool, target name and source path are required.";
+      return;
+    }
+    uploadBusy = true;
+    uploadErr = null;
+    uploadProgress = { sent: 0, total: 0 };
+    try {
+      // 1) Allocate the destination volume — capacity is what the user
+      //    typed; libvirt grows on upload only when stream length covers it.
+      await invoke("create_volume", {
+        req: {
+          pool_name: uploadPool,
+          name: uploadVol.trim(),
+          capacity_bytes: Math.floor(uploadCapacityGb * 1024 * 1024 * 1024),
+          format: uploadFormat,
+          allocation_bytes: null,
+        },
+      });
+      // 2) Stream the local file in.
+      await invoke("upload_volume", {
+        poolName: uploadPool,
+        volName: uploadVol.trim(),
+        sourcePath: uploadSourcePath.trim(),
+      });
+      uploadOpen = false;
+    } catch (e) {
+      uploadErr = e?.message || String(e);
+    } finally {
+      uploadBusy = false;
+      uploadProgress = null;
+    }
+  }
+
+  function fmtMib(b) {
+    if (b == null) return "—";
+    if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+    if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(0)} MiB`;
+    if (b >= 1024) return `${(b / 1024).toFixed(0)} KiB`;
+    return `${b} B`;
+  }
 
   // Secrets section
   let secrets = $state([]);
@@ -66,10 +138,17 @@
     await loadMem();
     await loadSecrets();
     timer = setInterval(loadMem, 5000);
+    uploadUnlisten = await listen("volume_upload_progress", (msg) => {
+      const p = msg?.payload;
+      if (p && p.pool_name === uploadPool && p.vol_name === uploadVol) {
+        uploadProgress = { sent: p.sent, total: p.total };
+      }
+    });
   });
 
   onDestroy(() => {
     if (timer) clearInterval(timer);
+    if (uploadUnlisten) uploadUnlisten();
   });
 
   function formatKib(kib) {
@@ -195,6 +274,9 @@
                 <span class="muted small">{p.pool_type}{p.target_path ? ` · ${p.target_path}` : ""}</span>
                 <span class="grow"></span>
                 <span class="muted small">{formatBytes(p.allocation)} / {formatBytes(p.capacity)} · {p.num_volumes} vols</span>
+                {#if p.is_active}
+                  <button class="btn-tiny" onclick={() => openUpload(p.name)} title="Upload a local file as a new volume in this pool">Upload</button>
+                {/if}
               </div>
               <div class="bar slim"><div class="bar-fill" style="width: {pct}%"></div></div>
             </li>
@@ -243,6 +325,63 @@
     </section>
   </div>
 </div>
+
+{#if uploadOpen}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div class="upload-backdrop" onclick={closeUpload} role="dialog" aria-modal="true">
+    <div class="upload-dialog" onclick={(e) => e.stopPropagation()} role="document">
+      <h3>Upload to pool · <span class="mono">{uploadPool}</span></h3>
+      <p class="muted small">
+        Local file path is read by kraftwerk and streamed into the pool
+        via libvirt's virStream RPC. The destination volume is created
+        first; pre-existing names will fail.
+      </p>
+      <label>
+        <span>Source path on this machine</span>
+        <input type="text" bind:value={uploadSourcePath}
+          placeholder="/Users/cali/Downloads/debian-13.iso" disabled={uploadBusy} />
+      </label>
+      <label>
+        <span>Target volume name</span>
+        <input type="text" bind:value={uploadVol}
+          placeholder="debian-13.iso" disabled={uploadBusy} />
+      </label>
+      <div class="row two">
+        <label>
+          <span>Capacity (GiB)</span>
+          <input type="number" min="0.1" step="0.1" bind:value={uploadCapacityGb} disabled={uploadBusy} />
+        </label>
+        <label>
+          <span>Format</span>
+          <select bind:value={uploadFormat} disabled={uploadBusy}>
+            <option value="raw">raw / iso</option>
+            <option value="qcow2">qcow2</option>
+          </select>
+        </label>
+      </div>
+      {#if uploadProgress && uploadProgress.total > 0}
+        <div class="prog">
+          <div class="bar"><div class="bar-fill" style="width: {(uploadProgress.sent / uploadProgress.total) * 100}%"></div></div>
+          <span class="small muted">
+            {fmtMib(uploadProgress.sent)} / {fmtMib(uploadProgress.total)}
+            ({((uploadProgress.sent / uploadProgress.total) * 100).toFixed(1)}%)
+          </span>
+        </div>
+      {:else if uploadBusy}
+        <div class="muted small">Allocating volume…</div>
+      {/if}
+      {#if uploadErr}
+        <pre class="err">{uploadErr}</pre>
+      {/if}
+      <div class="row actions">
+        <button class="btn-tiny" onclick={closeUpload} disabled={uploadBusy}>Cancel</button>
+        <button class="btn-tiny primary" onclick={doUpload} disabled={uploadBusy || !uploadVol.trim() || !uploadSourcePath.trim()}>
+          {uploadBusy ? "Uploading…" : "Upload"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .dashboard {
@@ -390,6 +529,67 @@
     border-color: #ef4444;
     font-weight: 500;
   }
+  .upload-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .upload-dialog {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    width: 480px;
+    max-width: 92vw;
+    max-height: 92vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+  .upload-dialog h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .upload-dialog label { display: flex; flex-direction: column; gap: 4px; }
+  .upload-dialog label > span {
+    font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .upload-dialog input[type="text"], .upload-dialog input[type="number"], .upload-dialog select {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-input); color: var(--text); font-size: 13px; font-family: inherit;
+  }
+  .upload-dialog .row { display: flex; gap: 12px; align-items: end; }
+  .upload-dialog .row.two > label { flex: 1; }
+  .upload-dialog .row.actions { justify-content: flex-end; }
+
+  .upload-dialog .prog {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .upload-dialog .prog .bar {
+    flex: 1; height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden;
+  }
+  .upload-dialog .prog .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #60a5fa, #34d399);
+    transition: width 0.3s ease;
+  }
+  .upload-dialog .err {
+    margin: 0; padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.30);
+    border-radius: 4px;
+    color: #ef4444;
+    font-size: 11px;
+    white-space: pre-wrap;
+  }
+  .btn-tiny.primary {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .btn-tiny.primary:hover:not(:disabled) { filter: brightness(1.1); }
+
   pre.err {
     margin: 0 0 8px;
     padding: 6px 10px;
