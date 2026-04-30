@@ -91,6 +91,7 @@
       driver_txmode: null,
       filterref: null,
       vlan_tag: null,
+      is_openvswitch: false,
       port_isolated: false,
     };
   }
@@ -354,6 +355,14 @@
 
         <label>VLAN tag</label>
         <input type="number" bind:value={editing.vlan_tag} />
+
+        <label>Open vSwitch bridge</label>
+        <input type="checkbox" bind:checked={editing.is_openvswitch} />
+        <small class="hint" style="grid-column: 2; margin-top: -8px;">
+          Tick when the host bridge is OVS-managed (libvirt emits
+          <code>&lt;virtualport type='openvswitch'/&gt;</code>). Required
+          for VLAN tags to take effect on OVS bridges.
+        </small>
 
         <label>Driver queues</label>
         <input type="number" bind:value={editing.driver_queues} placeholder="virtio multi-queue" />

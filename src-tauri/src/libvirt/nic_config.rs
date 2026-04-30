@@ -97,6 +97,10 @@ pub struct NicConfig {
     pub filterref: Option<String>,
     pub vlan_tag: Option<u16>,
     pub port_isolated: bool,
+    /// Emit `<virtualport type='openvswitch'/>` so libvirt plugs the
+    /// vNIC into an OVS bridge instead of a Linux bridge. Required when
+    /// the host bridge is OVS-managed.
+    pub is_openvswitch: bool,
 }
 
 impl Default for NicConfig {
@@ -116,6 +120,7 @@ impl Default for NicConfig {
             filterref: None,
             vlan_tag: None,
             port_isolated: false,
+            is_openvswitch: false,
         }
     }
 }
@@ -261,6 +266,7 @@ struct NicState {
     filterref: Option<String>,
     vlan_tag: Option<u16>,
     port_isolated: bool,
+    is_openvswitch: bool,
 }
 
 impl NicState {
@@ -276,6 +282,7 @@ impl NicState {
             bw_in: BandwidthLimits::default(), bw_out: BandwidthLimits::default(),
             driver_queues: None, driver_txmode: None, filterref: None,
             vlan_tag: None, port_isolated: false,
+            is_openvswitch: false,
         }
     }
 
@@ -310,6 +317,7 @@ impl NicState {
             driver_queues: self.driver_queues, driver_txmode: self.driver_txmode,
             filterref: self.filterref, vlan_tag: self.vlan_tag,
             port_isolated: self.port_isolated,
+            is_openvswitch: self.is_openvswitch,
         })
     }
 }
@@ -358,6 +366,12 @@ fn handle_child(n: &str, a: &[(String, String)], path: &[String], s: &mut NicSta
         }
         (Some("vlan"), "tag") => {
             s.vlan_tag = get_attr(a, "id").and_then(|v| v.parse().ok());
+        }
+        (Some("interface"), "virtualport") => {
+            // <virtualport type='openvswitch'/>
+            if get_attr(a, "type").as_deref() == Some("openvswitch") {
+                s.is_openvswitch = true;
+            }
         }
         (Some("bandwidth"), "inbound") => {
             s.bw_in.average = get_attr(a, "average").and_then(|v| v.parse().ok());
@@ -447,6 +461,9 @@ pub fn build_nic_xml(nic: &NicConfig) -> String {
     }
     if let Some(tag) = nic.vlan_tag {
         s.push_str(&format!("  <vlan>\n    <tag id='{tag}'/>\n  </vlan>\n"));
+    }
+    if nic.is_openvswitch {
+        s.push_str("  <virtualport type='openvswitch'/>\n");
     }
     if nic.port_isolated {
         s.push_str("  <port isolated='yes'/>\n");
@@ -780,7 +797,33 @@ mod tests {
             filterref: Some("clean-traffic".into()),
             vlan_tag: Some(42),
             port_isolated: true,
+            is_openvswitch: false,
         };
+        assert_eq!(roundtrip(&nic), nic);
+    }
+
+    #[test]
+    fn roundtrip_openvswitch_bridge() {
+        let nic = NicConfig {
+            source: NicSource::Bridge { name: "ovsbr0".into() },
+            model: Some("virtio".into()),
+            mac: None,
+            target_dev: None,
+            link_state: None,
+            mtu: None,
+            boot_order: None,
+            bandwidth_inbound: BandwidthLimits::default(),
+            bandwidth_outbound: BandwidthLimits::default(),
+            driver_queues: None,
+            driver_txmode: None,
+            filterref: None,
+            vlan_tag: Some(100),
+            port_isolated: false,
+            is_openvswitch: true,
+        };
+        let xml = build_nic_xml(&nic);
+        assert!(xml.contains("<virtualport type='openvswitch'/>"));
+        assert!(xml.contains("<vlan>"));
         assert_eq!(roundtrip(&nic), nic);
     }
 
