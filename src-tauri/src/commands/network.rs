@@ -253,3 +253,18 @@ pub fn remove_network_route(
     };
     state.libvirt().remove_network_route(&network, &route)
 }
+
+#[tauri::command]
+pub fn list_nw_filters(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::nwfilter::NwFilterInfo>, VirtManagerError> {
+    state.libvirt().list_nw_filters()
+}
+
+#[tauri::command]
+pub fn get_nw_filter_xml(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<String, VirtManagerError> {
+    state.libvirt().get_nw_filter_xml(&name)
+}

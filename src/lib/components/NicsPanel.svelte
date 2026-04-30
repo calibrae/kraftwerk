@@ -14,6 +14,7 @@
 
   let nics = $state([]);
   let caps = $state(null);
+  let nwFilters = $state([]);
   let loading = $state(true);
   let err = $state(null);
   let busy = $state(false);
@@ -34,11 +35,13 @@
   async function reload() {
     loading = true; err = null;
     try {
-      const [list, dc] = await Promise.all([
+      const [list, dc, filters] = await Promise.all([
         invoke("list_domain_nics", { name: vmName }),
         invoke("get_domain_capabilities", {}).catch(() => null),
+        invoke("list_nw_filters").catch(() => []),
       ]);
       nics = list;
+      nwFilters = filters;
       caps = dc;
     } catch (e) {
       err = e?.message || JSON.stringify(e);
@@ -364,7 +367,12 @@
         </select>
 
         <label>Filter ref</label>
-        <input bind:value={editing.filterref} placeholder="e.g. clean-traffic" />
+        <input bind:value={editing.filterref} placeholder="e.g. clean-traffic" list="nwfilter-options" />
+        <datalist id="nwfilter-options">
+          {#each nwFilters as f}
+            <option value={f.name}></option>
+          {/each}
+        </datalist>
 
         <label>Port isolated</label>
         <input type="checkbox" bind:checked={editing.port_isolated} />

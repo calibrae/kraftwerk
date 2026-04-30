@@ -2308,6 +2308,46 @@ impl LibvirtConnection {
         })
     }
 
+    /// List all nwfilters defined on the hypervisor — built-in libvirt
+    /// filters (clean-traffic, no-mac-spoofing, no-ip-spoofing, allow-arp,
+    /// no-arp-spoofing, etc.) plus any user-defined ones.
+    pub fn list_nw_filters(&self) -> Result<Vec<crate::models::nwfilter::NwFilterInfo>, VirtManagerError> {
+        self.with_connection(|conn| {
+            let filters = conn.list_all_nw_filters(0).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "listAllNWFilters".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            let mut out = Vec::with_capacity(filters.len());
+            for f in &filters {
+                let name = f.get_name().unwrap_or_default();
+                let uuid = f.get_uuid_string().unwrap_or_default();
+                out.push(crate::models::nwfilter::NwFilterInfo { name, uuid });
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        })
+    }
+
+    /// Fetch the XML for a single nwfilter by name. Read-only — for
+    /// the inspect-this-filter view in the UI.
+    pub fn get_nw_filter_xml(&self, name: &str) -> Result<String, VirtManagerError> {
+        use virt::nwfilter::NWFilter;
+        self.with_connection(|conn| {
+            let f = NWFilter::lookup_by_name(conn, name).map_err(|e| {
+                VirtManagerError::OperationFailed {
+                    operation: "lookupNWFilter".into(),
+                    reason: e.to_string(),
+                }
+            })?;
+            f.get_xml_desc(0).map_err(|e| VirtManagerError::OperationFailed {
+                operation: "nwFilterGetXMLDesc".into(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     /// Add a static `<route>` to a virtual network. libvirt has no
     /// virNetworkUpdate section for routes, so we rewrite the XML and
     /// redefine. Re-routing takes effect on the host immediately if the

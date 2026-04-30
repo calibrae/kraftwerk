@@ -121,6 +121,8 @@ pub fn run() {
             network::remove_dns_host,
             network::add_network_route,
             network::remove_network_route,
+            network::list_nw_filters,
+            network::get_nw_filter_xml,
             // Storage
             storage::list_storage_pools,
             storage::get_pool_xml,
