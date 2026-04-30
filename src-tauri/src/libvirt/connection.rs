@@ -3040,6 +3040,29 @@ impl LibvirtConnection {
         })
     }
 
+    /// Read the current `<launchSecurity>` block from a domain. Returns
+    /// Ok(None) when absent. Inactive XML is used so configuration shows
+    /// up even when the guest is off.
+    pub fn get_launch_security(&self, name: &str)
+        -> Result<Option<crate::libvirt::launch_security::LaunchSecurityConfig>, VirtManagerError>
+    {
+        let xml = self.get_domain_xml(name, true)?;
+        crate::libvirt::launch_security::parse_launch_security(&xml)
+    }
+
+    /// Apply a SEV launchSecurity block (or remove the existing one).
+    /// `cfg = None` strips the block; persistent only — SEV is fixed at
+    /// guest launch and cannot be hot-toggled. SEV-SNP / TDX writes are
+    /// rejected here because they need an operator-managed key bundle.
+    pub fn set_launch_security(&self, name: &str,
+        cfg: Option<&crate::libvirt::launch_security::LaunchSecurityConfig>)
+        -> Result<(), VirtManagerError>
+    {
+        let xml = self.get_domain_xml(name, true)?;
+        let new_xml = crate::libvirt::launch_security::apply_launch_security(&xml, cfg)?;
+        self.define_domain_xml(&new_xml)
+    }
+
 }
 /// VIR_DOMAIN_AFFECT_LIVE=1, VIR_DOMAIN_AFFECT_CONFIG=2
 fn domain_modify_flags(live: bool, config: bool) -> u32 {

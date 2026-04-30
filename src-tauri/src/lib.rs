@@ -25,6 +25,7 @@ use commands::cpu_tune as cmd_cpu_tune;
 use commands::storage;
 use commands::host;
 use commands::snapshots as snap;
+use commands::launch_security as cmd_launch_sec;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -209,6 +210,8 @@ pub fn run() {
             cmd_cpu_tune::set_iothread_count,
             cmd_cpu_tune::get_nested_virt_state,
             cmd_cpu_tune::set_nested_virt,
+            cmd_launch_sec::get_launch_security,
+            cmd_launch_sec::set_launch_security,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

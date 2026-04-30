@@ -17,6 +17,8 @@
   let caps = $state(null);    // DomainCaps (for custom model picker)
   let nested = $state(null);  // NestedVirtState
   let nestedBusy = $state(false);
+  let launchSec = $state(null);  // LaunchSecurityConfig | null
+  let launchSecBusy = $state(false);
   let loading = $state(true);
   let busy = $state(false);
   let err = $state(null);
@@ -31,15 +33,17 @@
   async function reload() {
     loading = true; err = null;
     try {
-      const [s, dc, nv] = await Promise.all([
+      const [s, dc, nv, ls] = await Promise.all([
         invoke("get_cpu_tune", { name: vmName }),
         invoke("get_domain_capabilities", {}).catch(() => null),
         invoke("get_nested_virt_state", { name: vmName }).catch(() => null),
+        invoke("get_launch_security", { name: vmName }).catch(() => null),
       ]);
       cfg = s;
       edit = deepClone(s);
       caps = dc;
       nested = nv;
+      launchSec = ls;
     } catch (e) {
       err = e?.message || JSON.stringify(e);
     } finally {
@@ -62,6 +66,49 @@
       err = e?.message || JSON.stringify(e);
     } finally {
       nestedBusy = false;
+    }
+  }
+
+  // SEV toggle. Always ships with default policy 0x0003 (NODBG | NOKS).
+  // Operator can edit policy / ES via raw XML if they need ES or kernel hashes.
+  async function enableSev() {
+    if (launchSecBusy) return;
+    const cbit = caps?.features?.sev_cbitpos;
+    const rpb = caps?.features?.sev_reduced_phys_bits;
+    if (cbit == null || rpb == null) {
+      err = "Host SEV cbitpos / reducedPhysBits unavailable — host doesn't support SEV.";
+      return;
+    }
+    launchSecBusy = true; err = null;
+    try {
+      const cfg = {
+        kind: { kind: "sev" },
+        cbitpos: cbit,
+        reduced_phys_bits: rpb,
+        policy: "0x0003",
+        session: null,
+        dh_cert: null,
+        kernel_hashes: false,
+      };
+      await invoke("set_launch_security", { name: vmName, cfg });
+      launchSec = await invoke("get_launch_security", { name: vmName });
+    } catch (e) {
+      err = e?.message || JSON.stringify(e);
+    } finally {
+      launchSecBusy = false;
+    }
+  }
+
+  async function disableLaunchSec() {
+    if (launchSecBusy) return;
+    launchSecBusy = true; err = null;
+    try {
+      await invoke("set_launch_security", { name: vmName, cfg: null });
+      launchSec = await invoke("get_launch_security", { name: vmName });
+    } catch (e) {
+      err = e?.message || JSON.stringify(e);
+    } finally {
+      launchSecBusy = false;
     }
   }
 
@@ -247,6 +294,55 @@
             Host kernel module status unknown (needs SSH access to read /sys/module/kvm_*/parameters/nested).
           {/if}
         </p>
+      </section>
+    {/if}
+
+    <!-- ── Launch security (phase 5.5): SEV / SEV-SNP / TDX ── -->
+    {#if caps?.features?.sev_supported || (caps?.devices?.launch_security_types?.length ?? 0) > 0 || launchSec}
+      <section class="lsec">
+        <h3>Launch security <span class="badge">restart required</span></h3>
+        {#if launchSec}
+          {@const k = launchSec.kind?.kind ?? "other"}
+          <div class="nested-row">
+            <span class="vendor-pill" class:intel={k === "tdx"} class:amd={k === "sev" || k === "sev-snp"}>
+              {k}
+            </span>
+            <span class="muted small">
+              policy <code>{launchSec.policy ?? "(default)"}</code>
+              {#if launchSec.cbitpos != null}· cbitpos <code>{launchSec.cbitpos}</code>{/if}
+              {#if launchSec.kernel_hashes}· kernelHashes=yes{/if}
+            </span>
+            <span class="grow"></span>
+            <button class="btn-small" onclick={disableLaunchSec} disabled={launchSecBusy || busy}>
+              {launchSecBusy ? "…" : "Disable"}
+            </button>
+          </div>
+          {#if k === "sev-snp" || k === "tdx" || k === "other"}
+            <p class="muted small">
+              {k === "sev-snp" ? "SEV-SNP" : k === "tdx" ? "Intel TDX" : "this launch type"}
+              uses operator-managed key bundles (idBlock, idAuth, hostData…). Editing those
+              parameters here would need a key-management workflow we don't ship; modify
+              via the raw XML panel and redefine the domain instead.
+            </p>
+          {/if}
+        {:else}
+          <div class="nested-row">
+            <span class="muted small">No confidential-compute launch security configured.</span>
+            <span class="grow"></span>
+            {#if caps?.features?.sev_supported && caps?.features?.sev_cbitpos != null}
+              <button class="btn-small" onclick={enableSev} disabled={launchSecBusy || busy}>
+                {launchSecBusy ? "…" : "Enable SEV (default policy)"}
+              </button>
+            {:else}
+              <span class="muted small">Host doesn't expose SEV capabilities.</span>
+            {/if}
+          </div>
+          <p class="muted small">
+            SEV encrypts guest RAM with a per-VM key sealed by the AMD Platform Security
+            Processor. Default policy <code>0x0003</code> = NODBG | NOKS (no debug, no key
+            sharing); SEV-ES (bit 2) and kernel hashes need a manual XML edit.
+          </p>
+        {/if}
       </section>
     {/if}
 

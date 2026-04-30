@@ -72,6 +72,14 @@ pub struct FeatureCaps {
     pub sev_supported: bool,
     pub sgx_supported: bool,
     pub hyperv_values: Vec<String>,
+    /// SEV C-bit position. Required to populate `<launchSecurity>` for
+    /// SEV/SEV-ES. Read from host caps `<sev><cbitpos>`.
+    pub sev_cbitpos: Option<u32>,
+    /// SEV reduced-phys-bits delta. Read from `<sev><reducedPhysBits>`.
+    pub sev_reduced_phys_bits: Option<u32>,
+    /// SEV-SNP supported (libvirt 9.5+ exposes `<sev><maxSnpGuests>` or
+    /// the launchSecurity enum includes "sev-snp").
+    pub sev_snp_supported: bool,
 }
 
 /// Parse a `<domainCapabilities>` XML document.
@@ -156,6 +164,12 @@ pub fn parse(xml: &str) -> Result<DomainCaps, VirtManagerError> {
                             }
                         }
                         TextTarget::LoaderPath => caps.os.loader_paths.push(txt),
+                        TextTarget::SevCbitpos => {
+                            caps.features.sev_cbitpos = txt.trim().parse().ok();
+                        }
+                        TextTarget::SevReducedPhysBits => {
+                            caps.features.sev_reduced_phys_bits = txt.trim().parse().ok();
+                        }
                     }
                 }
             }
@@ -233,6 +247,11 @@ fn on_start(
             caps.features.sgx_supported = attr("supported").as_deref() == Some("yes");
         }
 
+        // SEV detail children — text capture handled via TextTarget.
+        (Some("sev"), "cbitpos") => *capturing = Some(TextTarget::SevCbitpos),
+        (Some("sev"), "reducedPhysBits") => *capturing = Some(TextTarget::SevReducedPhysBits),
+        (Some("sev"), "maxSnpGuests") => caps.features.sev_snp_supported = true,
+
         _ => {}
     }
 }
@@ -242,6 +261,7 @@ enum TextTarget {
     Emulator, Machine, Arch, Domain,
     HostModelName, CustomModelName,
     EnumValue, LoaderPath,
+    SevCbitpos, SevReducedPhysBits,
 }
 
 fn utf8_name(e: &BytesStart) -> String {

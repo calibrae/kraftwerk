@@ -12,6 +12,7 @@ pub mod ssh_known_hosts;
 pub mod backing_chain;
 pub mod nested_virt;
 pub mod vtpm;
+pub mod launch_security;
 pub mod secrets;
 pub mod host_info;
 pub mod domain_caps;
