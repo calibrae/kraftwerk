@@ -63,6 +63,15 @@ dylibbundler \
 
 echo "==> bundled $(ls "$FRAMEWORKS_DIR" | wc -l | tr -d ' ') libs ($(du -sh "$FRAMEWORKS_DIR" | cut -f1))"
 
+REPO_LICENSES="$(dirname "$0")/../LICENSES"
+if [[ -d "$REPO_LICENSES" ]]; then
+  echo "==> copying third-party license texts into bundle (before re-sign)"
+  BUNDLE_LICENSES="$APP_PATH/Contents/Resources/LICENSES"
+  mkdir -p "$BUNDLE_LICENSES"
+  cp -R "$REPO_LICENSES/." "$BUNDLE_LICENSES/"
+  cp "$(dirname "$0")/../THIRD_PARTY_LICENSES.md" "$BUNDLE_LICENSES/THIRD_PARTY_LICENSES.md"
+fi
+
 echo "==> re-signing embedded dylibs"
 for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
   codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$dylib" 2>&1 \
@@ -83,15 +92,6 @@ codesign \
   --options runtime \
   --sign "$APPLE_SIGNING_IDENTITY" \
   "$APP_PATH"
-
-REPO_LICENSES="$(dirname "$0")/../LICENSES"
-if [[ -d "$REPO_LICENSES" ]]; then
-  echo "==> copying third-party license texts into bundle"
-  BUNDLE_LICENSES="$APP_PATH/Contents/Resources/LICENSES"
-  mkdir -p "$BUNDLE_LICENSES"
-  cp -R "$REPO_LICENSES/." "$BUNDLE_LICENSES/"
-  cp "$(dirname "$0")/../THIRD_PARTY_LICENSES.md" "$BUNDLE_LICENSES/THIRD_PARTY_LICENSES.md"
-fi
 
 echo "==> verifying"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH" 2>&1 | tail -5
