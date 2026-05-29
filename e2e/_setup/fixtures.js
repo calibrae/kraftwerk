@@ -59,10 +59,13 @@ export const test = base.extend({
 
   mock: async ({ page }, use) => {
     const api = {
+      // Register a per-command handler. MUST be called after page.goto()
+      // — the mock surface only exists on the navigated page. For
+      // pre-navigation registration use page.addInitScript with the
+      // inline `window.__kraftwerkMock.command(...)` pattern.
       async command(name, handler) {
         await page.evaluate(
           ([n, src]) => {
-            // eslint-disable-next-line no-new-func
             const fn = new Function("args", `return (${src})(args);`);
             window.__kraftwerkMock.command(n, fn);
           },

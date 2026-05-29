@@ -1,5 +1,6 @@
 <script>
   import { getState, startDomain, shutdownDomain, destroyDomain, suspendDomain, resumeDomain, rebootDomain, getDomainXml, managedSaveDomain, managedSaveRemove, hasManagedSave, coreDumpDomain, screenshotDomain } from "$lib/stores/app.svelte.js";
+  import { invoke } from "@tauri-apps/api/core";
   import SerialConsole from "./SerialConsole.svelte";
   import SnapshotsPanel from "./SnapshotsPanel.svelte";
   import RawXmlPanel from "./RawXmlPanel.svelte";

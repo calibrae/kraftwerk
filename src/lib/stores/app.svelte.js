@@ -126,7 +126,7 @@ export async function connect(id) {
     const domainList = await invoke("connect", { id });
     connectionStates = { ...connectionStates, [id]: { status: "connected" } };
     pollFailures.delete(id);
-    vms = domainList;
+    vms = Array.isArray(domainList) ? domainList : [];
     selectedVmName = null;
     // Load networks in parallel
     try { networks = await invoke("list_networks"); } catch (_) { networks = []; }
