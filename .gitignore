@@ -11,3 +11,5 @@ vite.config.ts.timestamp-*
 NEXT_AGENT.md
 .claude/
 CLAUDE.md
+playwright-report/
+test-results/
