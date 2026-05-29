@@ -325,7 +325,7 @@
     </div>
   {/if}
   <CloneVmDialog bind:open={showClone} source={appState.selectedVm} />
-  <MigrateVmDialog bind:open={showMigrate} vmName={vm?.name} sourceConnectionId={appState.selectedConnectionId} />
+  <MigrateVmDialog bind:open={showMigrate} vmName={appState.selectedVm?.name} sourceConnectionId={appState.selectedConnectionId} />
   <CloneFromTemplateDialog bind:open={showInstantiate} source={appState.selectedVm} />
   {#if screenshotData}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
