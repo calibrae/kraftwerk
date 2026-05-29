@@ -180,5 +180,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). TL;DR:
 
 ## License
 
-Dual-licensed under Apache-2.0 and MIT at your option. See
+Kraftwerk itself is dual-licensed under Apache-2.0 and MIT at your option. See
 [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
+
+The macOS bundle embeds libvirt and ~18 transitive dynamic libraries
+(glib, gnutls, libssh2, OpenSSL, …). These remain under their upstream
+licenses — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for
+the full inventory and SPDX identifiers, and the
+[LICENSES/](LICENSES) directory for the verbatim LGPL-2.1, LGPL-3.0,
+Apache-2.0, and BSD-3-Clause texts (also shipped inside the .app at
+`Contents/Resources/LICENSES/`). All bundled libraries are dynamically
+linked and unmodified from their upstream sources — LGPL's "user
+replacement" obligation is satisfied by the standard `dylib` install-name
+layout.
