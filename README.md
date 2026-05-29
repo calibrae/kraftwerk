@@ -113,25 +113,21 @@ bundle is not signed).
 
 ### Client-side libvirt
 
-Kraftwerk links against `libvirt` via FFI. Starting with v0.2.1 the
-**macOS DMG bundles libvirt + its transitive dylib deps** (libvirtbundler
-on the runner copies them into `Contents/Frameworks/` and rewrites
-install_names), so the macOS bundle is self-contained — no `brew install`
-required before first launch.
+Kraftwerk links against `libvirt` via FFI. How that gets resolved at
+install time depends on the format:
 
-Linux distros still pull libvirt at install time via the package
-manager's dependency resolver.
+| Bundle | What pulls libvirt in | Action on first launch |
+|---|---|---|
+| macOS Apple Silicon `.dmg` | **Bundled inside `.app/Contents/Frameworks/`** since v0.2.1 — `dylibbundler` runs in CI and embeds libvirt + 18 transitive deps (glib, gnutls, libssh2, gettext, json-c, nettle, …), each re-codesigned. | None — self-contained. |
+| Debian / Ubuntu `.deb` | Tauri's deb bundler writes `Depends: libvirt0` into the package metadata; `apt install` resolves it transitively. | None — apt handled it at install. |
+| Fedora / RHEL `.rpm` | Same story via `Requires: libvirt-libs`; `dnf install` resolves it. | None — dnf handled it. |
+| Linux `.AppImage` | **Not bundled.** AppImages are meant to be self-contained but Tauri's AppImage bundler doesn't pull libvirt in. | `sudo pacman -S libvirt` (Arch) or equivalent on other distros that aren't using the .deb/.rpm. |
+| macOS Intel | No CI build since GitHub retired free Intel runners (early 2026); see *Intel Macs — build from source* below. | `arch -x86_64 /usr/local/bin/brew install libvirt` (when building locally). |
 
-| Platform | What's needed at runtime |
-|---|---|
-| macOS (Apple Silicon DMG) | Nothing — libvirt is bundled inside the .app |
-| macOS (Intel, local build) | `arch -x86_64 /usr/local/bin/brew install libvirt` |
-| Debian / Ubuntu (.deb) | `sudo apt install libvirt0` (pulled in automatically) |
-| Fedora / RHEL (.rpm) | `sudo dnf install libvirt-libs` (pulled in automatically) |
-| Arch (AppImage) | `sudo pacman -S libvirt` |
-
-If you build kraftwerk yourself (Cargo) without running `scripts/bundle_macos_dylibs.sh`,
-you'll need `brew install libvirt` on the host machine just like the dev workflow.
+If you build kraftwerk yourself with `cargo` / `npm run tauri build` without
+running `scripts/bundle_macos_dylibs.sh` afterwards, the resulting .app
+will link directly to your local Homebrew libvirt — fine on the build
+machine, broken on any other Mac.
 
 ### Intel Macs — build from source
 
