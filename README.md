@@ -111,22 +111,27 @@ the [releases page](https://github.com/calibrae/kraftwerk/releases).
 Windows is built best-effort (libvirt-on-Windows is second-class; the
 bundle is not signed).
 
-### Client-side libvirt is required
+### Client-side libvirt
 
-Kraftwerk links against `libvirt` via FFI, so the **client machine**
-needs it installed even when the hypervisor is remote. The bundle is
-not self-contained.
+Kraftwerk links against `libvirt` via FFI. Starting with v0.2.1 the
+**macOS DMG bundles libvirt + its transitive dylib deps** (libvirtbundler
+on the runner copies them into `Contents/Frameworks/` and rewrites
+install_names), so the macOS bundle is self-contained — no `brew install`
+required before first launch.
 
-| Platform | Install |
+Linux distros still pull libvirt at install time via the package
+manager's dependency resolver.
+
+| Platform | What's needed at runtime |
 |---|---|
-| macOS (Apple Silicon) | `brew install libvirt` |
+| macOS (Apple Silicon DMG) | Nothing — libvirt is bundled inside the .app |
 | macOS (Intel, local build) | `arch -x86_64 /usr/local/bin/brew install libvirt` |
 | Debian / Ubuntu (.deb) | `sudo apt install libvirt0` (pulled in automatically) |
 | Fedora / RHEL (.rpm) | `sudo dnf install libvirt-libs` (pulled in automatically) |
 | Arch (AppImage) | `sudo pacman -S libvirt` |
 
-On first launch the app will crash with a `Library not loaded: libvirt.0.dylib`
-error if libvirt is missing — install it, then reopen.
+If you build kraftwerk yourself (Cargo) without running `scripts/bundle_macos_dylibs.sh`,
+you'll need `brew install libvirt` on the host machine just like the dev workflow.
 
 ### Intel Macs — build from source
 

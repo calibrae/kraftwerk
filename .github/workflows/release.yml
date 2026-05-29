@@ -59,8 +59,37 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
+      - name: ensure dylibbundler
+        run: command -v dylibbundler >/dev/null 2>&1 || brew install dylibbundler
       - name: tauri build (sign + notarize)
         run: npm run tauri build
+      - name: bundle libvirt + transitive dylibs into .app
+        run: ./scripts/bundle_macos_dylibs.sh src-tauri/target/release/bundle/macos/Kraftwerk.app
+      - name: rebuild DMG with the self-contained .app
+        # tauri build's DMG was built before we vendored libvirt into the
+        # bundle, so it contains the pre-fix binary. Discard it and make a
+        # fresh one from the now-self-contained .app.
+        run: |
+          set -eu
+          APP=src-tauri/target/release/bundle/macos/Kraftwerk.app
+          VERSION=$(node -p "require('./package.json').version")
+          OUT="src-tauri/target/release/bundle/dmg/Kraftwerk_${VERSION}_aarch64.dmg"
+          rm -f "$OUT"
+          hdiutil create -volname Kraftwerk -srcfolder "$APP" -ov -format UDZO "$OUT"
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$OUT"
+      - name: re-notarize the new DMG
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -eu
+          VERSION=$(node -p "require('./package.json').version")
+          DMG="src-tauri/target/release/bundle/dmg/Kraftwerk_${VERSION}_aarch64.dmg"
+          xcrun notarytool submit "$DMG" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG"
       - uses: actions/upload-artifact@v4
         with:
           name: kraftwerk-macos-aarch64
