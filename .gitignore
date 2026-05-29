@@ -13,3 +13,4 @@ NEXT_AGENT.md
 CLAUDE.md
 playwright-report/
 test-results/
+e2e/_artifacts/

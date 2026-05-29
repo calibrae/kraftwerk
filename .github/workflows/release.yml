@@ -77,6 +77,13 @@ jobs:
           rm -f "$OUT"
           hdiutil create -volname Kraftwerk -srcfolder "$APP" -ov -format UDZO "$OUT"
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$OUT"
+      - name: install playwright (for tier 3 bundle smoke)
+        run: |
+          npx playwright install chromium >/dev/null 2>&1 || true
+      - name: tier 3 — verify the bundled .app actually launches
+        env:
+          KRAFTWERK_E2E_BIN: src-tauri/target/release/bundle/macos/Kraftwerk.app/Contents/MacOS/kraftwerk
+        run: npm run test:e2e:bundle
       - name: re-notarize the new DMG
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

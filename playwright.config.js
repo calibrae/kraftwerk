@@ -15,7 +15,9 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /.*\.spec\.js$/,
+  // Tier 1 + 2 only by default — Tier 3 needs the built Tauri binary
+  // and runs against a real native window, so it has its own config.
+  testMatch: /(?<!tier3-).*\.spec\.js$/,
   fullyParallel: false,           // one webview, shared state
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
