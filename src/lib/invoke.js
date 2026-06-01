@@ -40,10 +40,13 @@ const COMMAND_TIMEOUTS = {
   inspect_ova: 60_000,                   // local tar walk
   core_dump_domain: 5 * 60 * 1000,
   screenshot_domain: 60_000,
-  // libvirt's connect/open does an SSH handshake — give it 30s before
-  // we declare the connection dead.
-  connect: 30_000,
-  check_host_key: 30_000,
+  // libvirt's connect/open does an SSH handshake. Our backend
+  // preflights with a 3s TCP probe and logs every step, so most
+  // failures land in <5s. An 8s budget gives slow-handshake hosts
+  // (large MOTDs, kex on weak hosts) some headroom without forcing
+  // the user to stare at a stuck spinner.
+  connect: 8_000,
+  check_host_key: 10_000,
 };
 
 /**

@@ -36,6 +36,10 @@ impl LibvirtConnection {
     /// hypervisor wedges the caller for ~2 minutes on the system TCP
     /// timeout, which freezes the Tauri IPC worker.
     pub fn open(&self, uri: &str) -> Result<(), VirtManagerError> {
+        let started = std::time::Instant::now();
+        let redacted = redact_uri(uri);
+        log::info!("open: starting connect to {redacted}");
+
         // Preflight can be disabled by setting KRAFTWERK_SKIP_PREFLIGHT=1
         // (used by integration tests, which tolerate the longer libvirt-side
         // timeout and may run in sandboxed contexts where raw TCP probes
@@ -43,19 +47,50 @@ impl LibvirtConnection {
         let skip = std::env::var("KRAFTWERK_SKIP_PREFLIGHT").ok().filter(|v| !v.is_empty()).is_some();
         if !skip {
             if let Some((host, port)) = parse_ssh_host_port(uri) {
+                let t_dns = std::time::Instant::now();
                 let addr = (host.as_str(), port)
                     .to_socket_addrs()
-                    .map_err(|e| VirtManagerError::Timeout { host: format!("{host}: {e}") })?
+                    .map_err(|e| {
+                        log::warn!("open: DNS resolve failed for {host}:{port}: {e}");
+                        VirtManagerError::Timeout { host: format!("{host}: {e}") }
+                    })?
                     .next()
-                    .ok_or_else(|| VirtManagerError::Timeout { host: host.clone() })?;
-                TcpStream::connect_timeout(&addr, Duration::from_secs(5))
-                    .map_err(|_| VirtManagerError::Timeout { host: format!("{host}:{port}") })?;
+                    .ok_or_else(|| {
+                        log::warn!("open: DNS returned no addresses for {host}");
+                        VirtManagerError::Timeout { host: host.clone() }
+                    })?;
+                log::info!("open: DNS resolved {host} → {addr} in {}ms", t_dns.elapsed().as_millis());
+
+                let t_tcp = std::time::Instant::now();
+                // 3-second preflight. Down from 5s — for routes that just
+                // aren't there the kernel rejects immediately anyway, and
+                // for a stalled SYN we'd rather fail fast and tell the UI.
+                TcpStream::connect_timeout(&addr, Duration::from_secs(3))
+                    .map_err(|e| {
+                        log::warn!("open: TCP preflight failed for {host}:{port} after {}ms: {e}",
+                                   t_tcp.elapsed().as_millis());
+                        VirtManagerError::Timeout { host: format!("{host}:{port}") }
+                    })?;
+                log::info!("open: TCP preflight ok for {host}:{port} in {}ms", t_tcp.elapsed().as_millis());
+            } else {
+                log::info!("open: skipping preflight (non-ssh URI)");
             }
+        } else {
+            log::info!("open: KRAFTWERK_SKIP_PREFLIGHT set, bypassing TCP probe");
         }
-        let conn = Connect::open(Some(uri)).map_err(|e| VirtManagerError::ConnectionFailed {
-            host: redact_uri(uri),
-            reason: e.to_string(),
+
+        let t_lv = std::time::Instant::now();
+        log::info!("open: calling libvirt virConnectOpen");
+        let conn = Connect::open(Some(uri)).map_err(|e| {
+            log::warn!("open: libvirt connect failed for {redacted} after {}ms: {e}",
+                       t_lv.elapsed().as_millis());
+            VirtManagerError::ConnectionFailed {
+                host: redacted.clone(),
+                reason: e.to_string(),
+            }
         })?;
+        log::info!("open: libvirt connected in {}ms", t_lv.elapsed().as_millis());
+
         // Register the lifecycle event callback before we install the new
         // Connect into the guard, so we can roll back on registration error.
         if let Err(e) = crate::libvirt::events::register(conn.as_ptr()) {
@@ -67,6 +102,7 @@ impl LibvirtConnection {
             let _ = old.close();
         }
         *guard = Some(conn);
+        log::info!("open: ready, total {}ms", started.elapsed().as_millis());
         Ok(())
     }
 
