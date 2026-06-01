@@ -5,7 +5,6 @@ use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
 
 use crate::models::error::VirtManagerError;
-use crate::models::network::ForwardMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkConfig {

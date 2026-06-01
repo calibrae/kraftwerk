@@ -61,7 +61,7 @@ pub fn parse(xml: &str) -> Result<DomainConfig, VirtManagerError> {
     reader.config_mut().trim_text(true);
 
     let mut cfg = DomainConfig::default();
-    let mut path: Vec<String> = Vec::new();
+    let path: Vec<String> = Vec::new();
     // Per-element state for capturing following text
     let mut mem_unit = String::from("KiB");
     let mut cur_mem_unit = String::from("KiB");

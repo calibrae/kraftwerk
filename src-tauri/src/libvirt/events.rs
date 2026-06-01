@@ -52,7 +52,7 @@ pub fn init_once(tx: mpsc::UnboundedSender<DomainEvent>) {
         std::thread::Builder::new()
             .name("libvirt-events".into())
             .spawn(|| loop {
-                if unsafe { virt_sys::virEventRunDefaultImpl() } < 0 {
+                if virt_sys::virEventRunDefaultImpl() < 0 {
                     log::error!("virEventRunDefaultImpl returned <0; event loop exiting");
                     break;
                 }

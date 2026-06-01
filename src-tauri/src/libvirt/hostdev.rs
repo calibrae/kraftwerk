@@ -420,7 +420,7 @@ pub fn parse_hostdevs(xml: &str) -> Result<Vec<HostDevice>, VirtManagerError> {
 
     // Handle a <source>-child element (the only place hostdev data lives).
     // Called from both Start and Empty branches.
-    let mut handle_source_child = |name: &str,
+    let handle_source_child = |name: &str,
                                    a: &[(String, String)],
                                    hd_type: &str,
                                    pci_domain: &mut Option<u16>,

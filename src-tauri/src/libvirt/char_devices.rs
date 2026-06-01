@@ -158,7 +158,6 @@ pub fn spice_vdagent_channel() -> ChannelConfig {
 /// typed variants.
 #[derive(Debug, Default)]
 struct RawCharDev {
-    el: String,                     // element name
     dev_type: String,               // type='pty'
     source_path: Option<String>,
     source_host: Option<String>,
@@ -249,7 +248,7 @@ fn handle_start_or_empty(
     a: &[(String, String)],
 ) {
     if current.is_none() && n == tag {
-        let mut raw = RawCharDev { el: tag.to_string(), ..Default::default() };
+        let mut raw = RawCharDev::default();
         if let Some(t) = get_attr(a, "type") {
             raw.dev_type = t;
         }
@@ -578,7 +577,6 @@ where
     let mut r = Reader::from_str(xml);
     r.config_mut().trim_text(false);
     let mut buf = Vec::new();
-    let mut depth: i32 = 0;
     let mut current: Option<RawCharDev> = None;
     let mut start_byte: Option<usize> = None;
     let mut udp_source_count = 0u8;
@@ -592,14 +590,12 @@ where
                 let n = utf8_name(&e);
                 if current.is_none() && n == tag {
                     let a = attrs(&e);
-                    let mut raw = RawCharDev { el: tag.to_string(), ..Default::default() };
+                    let mut raw = RawCharDev::default();
                     if let Some(t) = get_attr(&a, "type") { raw.dev_type = t; }
                     current = Some(raw);
                     start_byte = Some(pos_before);
-                    depth = 1;
                     udp_source_count = 0;
                 } else if current.is_some() {
-                    depth += 1;
                     let a = attrs(&e);
                     apply_child(current.as_mut().unwrap(), &n, &a, &mut udp_source_count);
                 }
@@ -636,8 +632,6 @@ where
                         return Ok(out);
                     }
                     start_byte = None;
-                } else if current.is_some() {
-                    depth -= 1;
                 }
             }
             _ => {}
