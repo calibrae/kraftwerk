@@ -44,7 +44,7 @@ async function bootIntoConnectedState(page) {
 
 test("help button opens the logs dialog and renders entries", async ({ page }) => {
   await bootIntoConnectedState(page);
-  await page.getByRole("button", { name: /\?\s*help/i }).click();
+  await page.getByRole("button", { name: /show application logs/i }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
@@ -56,7 +56,7 @@ test("help button opens the logs dialog and renders entries", async ({ page }) =
 
 test("verbose toggle calls set_log_level(debug)", async ({ page, mock }) => {
   await bootIntoConnectedState(page);
-  await page.getByRole("button", { name: /\?\s*help/i }).click();
+  await page.getByRole("button", { name: /show application logs/i }).click();
 
   const verboseCb = page.getByRole("dialog").getByText("Verbose (debug)").locator("..").locator("input");
   await verboseCb.check();
@@ -66,7 +66,7 @@ test("verbose toggle calls set_log_level(debug)", async ({ page, mock }) => {
 
 test("clear button invokes clear_logs", async ({ page, mock }) => {
   await bootIntoConnectedState(page);
-  await page.getByRole("button", { name: /\?\s*help/i }).click();
+  await page.getByRole("button", { name: /show application logs/i }).click();
   await page.getByRole("dialog").getByRole("button", { name: /^clear$/i }).click();
 
   await expect.poll(async () => await mock.lastCall("clear_logs")).not.toBeNull();

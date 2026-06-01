@@ -31,7 +31,7 @@ test("clicking + opens the add-connection dialog", async ({ page }) => {
   // The "+" affordance — match a small button at the top of the sidebar.
   // There are several "+" looking buttons in the app; the sidebar's is
   // the one inside the CONNECTIONS heading row.
-  const addBtn = page.locator(".sidebar-header button").first();
+  const addBtn = page.getByRole("button", { name: /add connection/i }).first();
   await addBtn.click();
 
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -39,7 +39,7 @@ test("clicking + opens the add-connection dialog", async ({ page }) => {
 
 test("dialog closes cleanly with the cancel/close affordance", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".sidebar-header button").first().click();
+  await page.getByRole("button", { name: /add connection/i }).first().click();
   await expect(page.getByRole("dialog")).toBeVisible();
 
   // Either a Cancel button or the × control closes it.

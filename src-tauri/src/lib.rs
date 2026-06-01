@@ -54,6 +54,8 @@ pub fn run() {
         .manage(app_state)
         .setup(|app| {
             use tauri::Manager; use tauri::Emitter;
+            use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+
             let state: tauri::State<'_, AppState> = app.state();
             if let Some(mut rx) = state.take_event_rx() {
                 let handle = app.handle().clone();
@@ -63,6 +65,45 @@ pub fn run() {
                     }
                 });
             }
+
+            // Native menu bar — primarily macOS, where the menu lives
+            // at the top of the screen and is always visible regardless
+            // of connection state. On Linux/Windows Tauri attaches the
+            // menu to the window's chrome.
+            let show_logs = MenuItemBuilder::with_id("show-logs", "Application Logs…")
+                .accelerator("CmdOrCtrl+L")
+                .build(app)?;
+            let help_menu = SubmenuBuilder::new(app, "Help")
+                .item(&show_logs)
+                .build()?;
+            // App menu (first submenu on macOS — shows the app name).
+            let app_menu = SubmenuBuilder::new(app, "Kraftwerk")
+                .about(None)
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo().redo().separator()
+                .cut().copy().paste().select_all()
+                .build()?;
+            let menu = MenuBuilder::new(app)
+                .item(&app_menu)
+                .item(&edit_menu)
+                .item(&help_menu)
+                .build()?;
+            app.set_menu(menu)?;
+
+            // Bridge menu clicks to the webview via an event the
+            // frontend listens for.
+            app.on_menu_event(|app_handle, event| {
+                if event.id() == "show-logs" {
+                    let _ = app_handle.emit("menu:show-logs", ());
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

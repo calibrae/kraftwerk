@@ -13,6 +13,7 @@
   import OvaImportDialog from "$lib/components/OvaImportDialog.svelte";
   import LogsDialog from "$lib/components/LogsDialog.svelte";
   import { invoke } from "../lib/invoke.js";
+  import { listen } from "@tauri-apps/api/event";
   import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
 
   const appState = getState();
@@ -70,11 +71,20 @@
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
+  let menuUnlisten = null;
   onMount(async () => {
     await loadConnections();
     startAutoPolls();
     await subscribeDomainEvents();
+    // Wire the native menu bar's "Help → Application Logs" item to
+    // the same dialog the sidebar's ≡ button opens.
+    try {
+      menuUnlisten = await listen("menu:show-logs", () => { showLogs = true; });
+    } catch (_) { /* not running under Tauri (e.g. plain vite dev) */ }
   });
+  // Plain-browser dev (vite alone) won't have @tauri-apps/api/event,
+  // so swallow the import error silently — the in-window button still
+  // works.
 </script>
 
 <div class="app-layout">
@@ -82,6 +92,7 @@
     onAddConnection={() => { editingConnection = null; showConnectionDialog = true; }}
     onEditConnection={(conn) => { editingConnection = conn; showConnectionDialog = true; }}
     onConnect={hostKeyConnect}
+    onShowLogs={() => showLogs = true}
   />
 
   <main class="main-area">
@@ -98,7 +109,6 @@
         <button class="view-tab" class:active={view === "storage"} onclick={() => view = "storage"}>
           Storage <span class="count">{appState.pools.length}</span>
         </button>
-        <button class="view-tab help-btn" onclick={() => showLogs = true} title="Application logs (verbose toggle inside)">? Help</button>
       </div>
     {/if}
 

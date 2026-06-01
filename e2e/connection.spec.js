@@ -21,7 +21,7 @@ test("adding a connection invokes add_connection with the form values", async ({
     last_connected: null,
   }));
 
-  await page.locator(".sidebar-header button").first().click();
+  await page.getByRole("button", { name: /add connection/i }).first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 

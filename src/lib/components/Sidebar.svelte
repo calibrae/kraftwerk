@@ -1,7 +1,7 @@
 <script>
   import { getState, connect, disconnect, selectVm, removeConnection, refreshVms } from "$lib/stores/app.svelte.js";
 
-  let { onAddConnection = () => {}, onEditConnection = () => {}, onConnect = null } = $props();
+  let { onAddConnection = () => {}, onEditConnection = () => {}, onConnect = null, onShowLogs = () => {} } = $props();
   const appState = getState();
 
   const stateColors = {
@@ -58,7 +58,10 @@
 <aside class="sidebar">
   <div class="sidebar-header">
     <h2>Connections</h2>
-    <button class="btn-icon" onclick={onAddConnection} title="Add connection">+</button>
+    <div class="sidebar-actions">
+      <button class="btn-icon" onclick={onShowLogs} title="Application logs (⌘L)" aria-label="Show application logs">≡</button>
+      <button class="btn-icon" onclick={onAddConnection} title="Add connection" aria-label="Add connection">+</button>
+    </div>
   </div>
 
   {#if appState.savedConnections.length === 0}
@@ -184,6 +187,8 @@
   }
 
   .btn-icon:hover { background: var(--bg-hover); }
+
+  .sidebar-actions { display: flex; gap: 6px; }
 
   .empty {
     padding: 24px 16px;
