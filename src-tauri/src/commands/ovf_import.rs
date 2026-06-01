@@ -8,7 +8,7 @@ use crate::models::error::VirtManagerError;
 
 /// Read an OVA's OVF descriptor and parse it. Doesn't extract any
 /// disks — used by the wizard to preview metadata.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inspect_ova(
     state: State<'_, AppState>,
     ova_path: String,
@@ -18,7 +18,7 @@ pub fn inspect_ova(
 
 /// Import an OVA: convert each VMDK to qcow2 in `pool_name` and
 /// define a domain XML. Returns the new domain's name.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_ova(
     state: State<'_, AppState>,
     ova_path: String,

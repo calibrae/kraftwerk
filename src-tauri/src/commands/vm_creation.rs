@@ -7,7 +7,7 @@ use crate::models::error::VirtManagerError;
 use crate::models::os_variants::{self, OsVariant};
 
 /// Return the list of known OS variants for the wizard.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_os_variants() -> Vec<OsVariant> {
     os_variants::all_variants()
 }
@@ -19,7 +19,7 @@ pub fn list_os_variants() -> Vec<OsVariant> {
 ///   then swaps the disk_source to ExistingPath before building XML.
 /// - Builds domain XML and defines the domain.
 /// - Optionally starts the VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_vm(
     state: State<'_, AppState>,
     mut params: DomainBuildParams,

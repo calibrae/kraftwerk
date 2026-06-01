@@ -7,7 +7,7 @@ use crate::libvirt::char_devices::{
 };
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_char_devices(
     state: State<'_, AppState>,
     name: String,
@@ -15,7 +15,7 @@ pub fn get_char_devices(
     state.libvirt().get_char_devices(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_channel(
     state: State<'_, AppState>,
     name: String,
@@ -26,7 +26,7 @@ pub fn add_channel(
     state.libvirt().add_channel(&name, &channel, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_channel(
     state: State<'_, AppState>,
     name: String,
@@ -37,7 +37,7 @@ pub fn remove_channel(
     state.libvirt().remove_channel(&name, &target_name, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_serial(
     state: State<'_, AppState>,
     name: String,
@@ -48,7 +48,7 @@ pub fn add_serial(
     state.libvirt().add_serial(&name, &serial, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_serial(
     state: State<'_, AppState>,
     name: String,
@@ -59,7 +59,7 @@ pub fn remove_serial(
     state.libvirt().remove_serial(&name, port, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_guest_agent_channel(
     state: State<'_, AppState>,
     name: String,
@@ -69,7 +69,7 @@ pub fn add_guest_agent_channel(
     state.libvirt().add_guest_agent_channel(&name, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_spice_vdagent_channel(
     state: State<'_, AppState>,
     name: String,

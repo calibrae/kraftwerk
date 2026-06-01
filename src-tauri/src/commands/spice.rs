@@ -289,7 +289,7 @@ impl From<InputEventDto> for InputEvent {
 
 /// Open a SPICE session for a VM and begin forwarding events.
 /// Returns the surface dimensions the moment a SurfaceCreated arrives (or 0x0 on timeout).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_spice(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -356,12 +356,12 @@ pub fn open_spice(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_spice(state: State<'_, AppState>) {
     state.close_spice();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn spice_input(
     state: State<'_, AppState>,
     event: InputEventDto,

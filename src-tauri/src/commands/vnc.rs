@@ -6,7 +6,7 @@ use crate::models::error::VirtManagerError;
 
 /// Open a VNC proxy for a VM. Returns the local WebSocket port.
 /// Tunnels via SSH when the libvirt connection is qemu+ssh://.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_vnc(state: State<'_, AppState>, name: String) -> Result<u16, VirtManagerError> {
     // Close prior session
     state.close_vnc();
@@ -35,7 +35,7 @@ pub fn open_vnc(state: State<'_, AppState>, name: String) -> Result<u16, VirtMan
     Ok(ws_port)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_vnc(state: State<'_, AppState>) {
     state.close_vnc();
 }

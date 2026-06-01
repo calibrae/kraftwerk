@@ -6,7 +6,7 @@ use crate::app_state::AppState;
 use crate::libvirt::snapshots::SnapshotInfo;
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_snapshots(
     state: State<'_, AppState>,
     name: String,
@@ -14,7 +14,7 @@ pub fn list_snapshots(
     state.libvirt().list_snapshots(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_snapshot(
     state: State<'_, AppState>,
     name: String,
@@ -27,7 +27,7 @@ pub fn create_snapshot(
         .create_snapshot(&name, &snap_name, description.as_deref(), flags)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn revert_snapshot(
     state: State<'_, AppState>,
     name: String,
@@ -37,7 +37,7 @@ pub fn revert_snapshot(
     state.libvirt().revert_snapshot(&name, &snap_name, flags)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_snapshot(
     state: State<'_, AppState>,
     name: String,

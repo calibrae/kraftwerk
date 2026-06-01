@@ -7,7 +7,7 @@ use crate::libvirt::hostdev::{HostDevice, HostMdev, HostPciDevice, HostUsbDevice
 use crate::models::error::VirtManagerError;
 
 /// All PCI devices on the hypervisor host.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_host_pci_devices(
     state: State<'_, AppState>,
 ) -> Result<Vec<HostPciDevice>, VirtManagerError> {
@@ -15,7 +15,7 @@ pub fn list_host_pci_devices(
 }
 
 /// All USB devices on the hypervisor host.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_host_usb_devices(
     state: State<'_, AppState>,
 ) -> Result<Vec<HostUsbDevice>, VirtManagerError> {
@@ -23,7 +23,7 @@ pub fn list_host_usb_devices(
 }
 
 /// The hostdev entries already attached to a given domain.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_domain_hostdevs(
     state: State<'_, AppState>,
     name: String,
@@ -31,7 +31,7 @@ pub fn list_domain_hostdevs(
     state.libvirt().list_domain_hostdevs(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_hostdev(
     state: State<'_, AppState>,
     name: String,
@@ -42,21 +42,21 @@ pub fn attach_hostdev(
     state.libvirt().attach_hostdev(&name, &dev, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_host_mdevs(
     state: State<'_, AppState>,
 ) -> Result<Vec<HostMdev>, VirtManagerError> {
     state.libvirt().list_host_mdevs()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_host_mdev_types(
     state: State<'_, AppState>,
 ) -> Result<Vec<MdevType>, VirtManagerError> {
     state.libvirt().list_host_mdev_types()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detach_hostdev(
     state: State<'_, AppState>,
     name: String,

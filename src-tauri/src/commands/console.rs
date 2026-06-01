@@ -5,7 +5,7 @@ use crate::models::error::VirtManagerError;
 
 /// Open a serial console session for a VM.
 /// Data from the VM is emitted as `console:data` events with base64-encoded bytes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_console(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -24,7 +24,7 @@ pub fn open_console(
 }
 
 /// Send input bytes to the active console session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn console_send(
     state: State<'_, AppState>,
     data: Vec<u8>,
@@ -33,14 +33,14 @@ pub fn console_send(
 }
 
 /// Close the active console session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_console(state: State<'_, AppState>) -> Result<(), VirtManagerError> {
     state.close_console();
     Ok(())
 }
 
 /// Check if a console session is active.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn console_is_active(state: State<'_, AppState>) -> bool {
     state.console_is_active()
 }

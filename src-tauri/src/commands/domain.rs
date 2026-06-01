@@ -5,49 +5,49 @@ use crate::models::error::VirtManagerError;
 use crate::models::vm::VmInfo;
 
 /// List all VMs on the connected hypervisor.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_domains(state: State<'_, AppState>) -> Result<Vec<VmInfo>, VirtManagerError> {
     state.libvirt().list_all_domains()
 }
 
 /// Start a VM by name.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().start_domain(&name)
 }
 
 /// Gracefully shutdown a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shutdown_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().shutdown_domain(&name)
 }
 
 /// Force stop a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn destroy_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().destroy_domain(&name)
 }
 
 /// Suspend a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn suspend_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().suspend_domain(&name)
 }
 
 /// Resume a paused VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resume_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().resume_domain(&name)
 }
 
 /// Reboot a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reboot_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().reboot_domain(&name)
 }
 
 /// Get the XML description for a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_domain_xml(
     state: State<'_, AppState>,
     name: String,
@@ -57,7 +57,7 @@ pub fn get_domain_xml(
 }
 
 /// Get parsed domain configuration for a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_domain_config(
     state: State<'_, AppState>,
     name: String,
@@ -67,7 +67,7 @@ pub fn get_domain_config(
 }
 
 /// Set the vCPU count for a VM. `live=true` affects running VM, `config=true` persists.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vcpus(
     state: State<'_, AppState>,
     name: String,
@@ -79,7 +79,7 @@ pub fn set_vcpus(
 }
 
 /// Set memory (in MiB) for a VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_memory_mb(
     state: State<'_, AppState>,
     name: String,
@@ -94,7 +94,7 @@ pub fn set_memory_mb(
 /// Set the **maximum (boot-time) memory** (in MiB) for a VM.
 /// Only applies to the persistent config. Usually requires the VM to
 /// be shut off for the change to take effect on next boot.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_max_memory_mb(
     state: State<'_, AppState>,
     name: String,
@@ -106,7 +106,7 @@ pub fn set_max_memory_mb(
 /// Set the **maximum (boot-time) vCPU count** for a VM.
 /// Only applies to the persistent config. Usually requires the VM to
 /// be shut off for the change to take effect on next boot.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_max_vcpus_count(
     state: State<'_, AppState>,
     name: String,
@@ -116,14 +116,14 @@ pub fn set_max_vcpus_count(
 }
 
 /// Remove a VM's persistent configuration. VM must be shut off.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undefine_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().undefine_domain(&name)
 }
 
 
 /// Sample live CPU/memory/disk/network stats for a domain.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_domain_stats(
     state: State<'_, AppState>,
     name: String,
@@ -134,14 +134,14 @@ pub fn get_domain_stats(
 /// Replace a domain's persistent definition with the given XML. The
 /// running VM is unaffected until the next start. Used by the raw-XML
 /// editor.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn define_domain(state: State<'_, AppState>, xml: String) -> Result<(), VirtManagerError> {
     state.libvirt().define_domain_xml(&xml)
 }
 
 /// Get hotplug-relevant memory state: maxMemory config (if set) and
 /// number of attached DIMM devices.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_memory_hotplug(
     state: State<'_, AppState>,
     name: String,
@@ -151,7 +151,7 @@ pub fn get_memory_hotplug(
 
 /// Set the `<maxMemory slots>` element. Persistent only — VM reboot
 /// required for the new slot count to take effect.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_max_memory_slots(
     state: State<'_, AppState>,
     name: String,
@@ -163,7 +163,7 @@ pub fn set_max_memory_slots(
 
 /// Live-attach a DIMM device. Use `live=true, config=true` to grow the
 /// running guest and persist for next boot.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_memory_dimm(
     state: State<'_, AppState>,
     name: String,
@@ -180,7 +180,7 @@ pub fn attach_memory_dimm(
 /// Full-copy clone a shut-off VM. Each r/w disk volume is duplicated
 /// in its own pool via virStorageVolCreateXMLFrom; CD-ROMs and
 /// readonly/shareable disks pass through unchanged.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clone_domain(
     state: State<'_, AppState>,
     source: String,
@@ -198,7 +198,7 @@ pub fn clone_domain(
 
 /// Tail the qemu wrapper log for a domain. Reads over the active
 /// connection's SSH target, or locally for `qemu:///system`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_qemu_log(
     state: State<'_, AppState>,
     name: String,
@@ -214,25 +214,25 @@ pub fn get_qemu_log(
 }
 
 /// Suspend the VM to libvirt-managed state. Next start resumes from it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn managed_save_domain(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().managed_save(&name)
 }
 
 /// Whether the domain has a pending managed-save state.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn has_managed_save(state: State<'_, AppState>, name: String) -> Result<bool, VirtManagerError> {
     state.libvirt().has_managed_save(&name)
 }
 
 /// Discard the pending managed-save state without resuming.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn managed_save_remove(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().managed_save_remove(&name)
 }
 
 /// Memory dump to a hypervisor-side file path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn core_dump_domain(
     state: State<'_, AppState>,
     name: String,
@@ -244,7 +244,7 @@ pub fn core_dump_domain(
 }
 
 /// Screenshot the guest console. Returns mime type + base64 PNG/PPM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn screenshot_domain(
     state: State<'_, AppState>,
     name: String,
@@ -257,7 +257,7 @@ pub fn screenshot_domain(
 
 // -- Backing chain (qcow2 overlays) --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_backing_chains(
     state: State<'_, AppState>,
     name: String,
@@ -267,7 +267,7 @@ pub fn get_backing_chains(
 
 /// Flatten an overlay onto its disk image. Async — poll get_block_job
 /// for progress.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn block_pull(
     state: State<'_, AppState>,
     name: String,
@@ -279,7 +279,7 @@ pub fn block_pull(
 
 /// Commit an overlay back into its parent. With `top` and `base` empty
 /// strings the active overlay is committed into its immediate parent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn block_commit(
     state: State<'_, AppState>,
     name: String,
@@ -301,7 +301,7 @@ pub fn block_commit(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_block_job(
     state: State<'_, AppState>,
     name: String,
@@ -310,7 +310,7 @@ pub fn get_block_job(
     state.libvirt().get_block_job_info(&name, &disk)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn block_job_abort(
     state: State<'_, AppState>,
     name: String,

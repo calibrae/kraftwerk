@@ -54,12 +54,12 @@ pub struct CreateNetworkRequest {
 fn default_true() -> bool { true }
 
 /// List all virtual networks.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_networks(state: State<'_, AppState>) -> Result<Vec<NetworkInfo>, VirtManagerError> {
     state.libvirt().list_networks()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_network_config(
     state: State<'_, AppState>,
     name: String,
@@ -67,7 +67,7 @@ pub fn get_network_config(
     state.libvirt().get_network_config(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_network_xml(
     state: State<'_, AppState>,
     name: String,
@@ -75,22 +75,22 @@ pub fn get_network_xml(
     state.libvirt().get_network_xml(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_network(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().start_network(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_network(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().stop_network(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_network(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().delete_network(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_network_autostart(
     state: State<'_, AppState>,
     name: String,
@@ -101,7 +101,7 @@ pub fn set_network_autostart(
 
 /// Create a network of any supported mode from structured params.
 /// This is the new unified creation command.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_network(
     state: State<'_, AppState>,
     req: CreateNetworkRequest,
@@ -143,7 +143,7 @@ pub fn create_network(
 }
 
 /// Legacy command — kept for back-compat. Prefer `create_network`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_nat_network(
     state: State<'_, AppState>,
     name: String,
@@ -166,7 +166,7 @@ pub fn create_nat_network(
 
 // ── Per-host DHCP / DNS entries (phase 4.1) ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_dhcp_host(
     state: State<'_, AppState>,
     network: String,
@@ -184,7 +184,7 @@ pub fn add_dhcp_host(
     state.libvirt().network_update_section(&network, 3, 4, &snippet)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_dhcp_host(
     state: State<'_, AppState>,
     network: String,
@@ -201,7 +201,7 @@ pub fn remove_dhcp_host(
     state.libvirt().network_update_section(&network, 2, 4, &snippet)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_dns_host(
     state: State<'_, AppState>,
     network: String,
@@ -213,7 +213,7 @@ pub fn add_dns_host(
     state.libvirt().network_update_section(&network, 3, 10, &snippet)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_dns_host(
     state: State<'_, AppState>,
     network: String,
@@ -224,7 +224,7 @@ pub fn remove_dns_host(
     state.libvirt().network_update_section(&network, 2, 10, &snippet)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_network_route(
     state: State<'_, AppState>,
     network: String,
@@ -239,7 +239,7 @@ pub fn add_network_route(
     state.libvirt().add_network_route(&network, &route)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_network_route(
     state: State<'_, AppState>,
     network: String,
@@ -254,14 +254,14 @@ pub fn remove_network_route(
     state.libvirt().remove_network_route(&network, &route)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_nw_filters(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::models::nwfilter::NwFilterInfo>, VirtManagerError> {
     state.libvirt().list_nw_filters()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_nw_filter_xml(
     state: State<'_, AppState>,
     name: String,

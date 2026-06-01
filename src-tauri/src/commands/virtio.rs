@@ -9,7 +9,7 @@ use crate::libvirt::virtio_devices::{
 };
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_virtio_devices(
     state: State<'_, AppState>,
     name: String,
@@ -17,7 +17,7 @@ pub fn get_virtio_devices(
     state.libvirt().get_virtio_devices(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vtpm_info(
     state: State<'_, AppState>,
     name: String,
@@ -25,7 +25,7 @@ pub fn get_vtpm_info(
     state.libvirt().get_vtpm_info(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_tpm(
     state: State<'_, AppState>,
     name: String,
@@ -34,7 +34,7 @@ pub fn set_tpm(
     state.libvirt().set_tpm(&name, cfg.as_ref(), false, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_watchdog(
     state: State<'_, AppState>,
     name: String,
@@ -43,7 +43,7 @@ pub fn set_watchdog(
     state.libvirt().set_watchdog(&name, cfg.as_ref(), false, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_panic(
     state: State<'_, AppState>,
     name: String,
@@ -52,7 +52,7 @@ pub fn set_panic(
     state.libvirt().set_panic(&name, cfg.as_ref(), false, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_balloon(
     state: State<'_, AppState>,
     name: String,
@@ -63,7 +63,7 @@ pub fn set_balloon(
     state.libvirt().set_balloon(&name, cfg.as_ref(), live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vsock(
     state: State<'_, AppState>,
     name: String,
@@ -74,7 +74,7 @@ pub fn set_vsock(
     state.libvirt().set_vsock(&name, cfg.as_ref(), live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_rng(
     state: State<'_, AppState>,
     name: String,
@@ -85,7 +85,7 @@ pub fn add_rng(
     state.libvirt().add_rng(&name, &cfg, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_rng(
     state: State<'_, AppState>,
     name: String,
@@ -96,7 +96,7 @@ pub fn remove_rng(
     state.libvirt().remove_rng(&name, &cfg, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_rng(
     state: State<'_, AppState>,
     name: String,
@@ -107,7 +107,7 @@ pub fn update_rng(
     state.libvirt().update_rng(&name, &cfg, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_iommu(
     state: State<'_, AppState>,
     name: String,

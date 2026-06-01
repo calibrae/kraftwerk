@@ -7,7 +7,7 @@ use crate::libvirt::nic_config::NicConfig;
 use crate::models::error::VirtManagerError;
 
 /// Read every `<interface>` attached to the domain.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_domain_nics(
     state: State<'_, AppState>,
     name: String,
@@ -17,7 +17,7 @@ pub fn list_domain_nics(
 
 /// Attach a new NIC. `live` + `config` map to the libvirt
 /// VIR_DOMAIN_AFFECT_LIVE / _CONFIG flags; at least one must be true.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_domain_nic(
     state: State<'_, AppState>,
     name: String,
@@ -29,7 +29,7 @@ pub fn add_domain_nic(
 }
 
 /// Detach the NIC identified by MAC (or `vnetN` target dev).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_domain_nic(
     state: State<'_, AppState>,
     name: String,
@@ -42,7 +42,7 @@ pub fn remove_domain_nic(
 
 /// In-place NIC edit (link state flip, filterref change, etc).
 /// `nic.mac` must match the existing device.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_domain_nic(
     state: State<'_, AppState>,
     name: String,

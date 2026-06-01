@@ -5,7 +5,7 @@ use crate::app_state::AppState;
 use crate::libvirt::cpu_tune_config::{CpuTuneSnapshot, CpuTunePatch};
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_cpu_tune(
     state: State<'_, AppState>,
     name: String,
@@ -13,7 +13,7 @@ pub fn get_cpu_tune(
     state.libvirt().get_cpu_tune(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn apply_cpu_tune(
     state: State<'_, AppState>,
     name: String,
@@ -22,7 +22,7 @@ pub fn apply_cpu_tune(
     state.libvirt().apply_cpu_tune(&name, &patch)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vcpu_count(
     state: State<'_, AppState>,
     name: String,
@@ -33,7 +33,7 @@ pub fn set_vcpu_count(
     state.libvirt().set_vcpu_count(&name, current, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_iothread_count(
     state: State<'_, AppState>,
     name: String,
@@ -42,7 +42,7 @@ pub fn set_iothread_count(
     state.libvirt().set_iothread_count(&name, count)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_nested_virt_state(
     state: State<'_, AppState>,
     name: String,
@@ -50,7 +50,7 @@ pub fn get_nested_virt_state(
     state.libvirt().get_nested_virt_state(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_nested_virt(
     state: State<'_, AppState>,
     name: String,

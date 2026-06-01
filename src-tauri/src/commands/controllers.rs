@@ -10,7 +10,7 @@ use crate::app_state::AppState;
 use crate::libvirt::controller_config::ControllerConfig;
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_controllers(
     state: State<'_, AppState>,
     name: String,
@@ -18,7 +18,7 @@ pub fn list_controllers(
     state.libvirt().list_controllers(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_controller(
     state: State<'_, AppState>,
     name: String,
@@ -31,7 +31,7 @@ pub fn add_controller(
         .add_controller(&name, &controller, live.unwrap_or(false), config.unwrap_or(true))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_controller(
     state: State<'_, AppState>,
     name: String,
@@ -49,7 +49,7 @@ pub fn remove_controller(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_controller(
     state: State<'_, AppState>,
     name: String,

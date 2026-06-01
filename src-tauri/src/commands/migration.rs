@@ -18,7 +18,7 @@ fn parse_uuid(id: &str) -> Result<Uuid, VirtManagerError> {
 /// Blocks until libvirt completes the migration; the call may take
 /// minutes for large guests. UI should call this from a worker task
 /// and poll `get_migration_status` for progress while it runs.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_domain(
     state: State<'_, AppState>,
     source_connection_id: String,
@@ -43,7 +43,7 @@ pub fn migrate_domain(
 /// Poll the current migration status for `name` on the source
 /// connection. Returns an empty progress (phase=None) when no
 /// migration is in flight.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_migration_status(
     state: State<'_, AppState>,
     source_connection_id: String,
@@ -55,7 +55,7 @@ pub fn get_migration_status(
 }
 
 /// Cancel an in-flight migration for `name`. Maps to virDomainAbortJob.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_migration(
     state: State<'_, AppState>,
     source_connection_id: String,

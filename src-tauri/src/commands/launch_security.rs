@@ -6,7 +6,7 @@ use crate::app_state::AppState;
 use crate::libvirt::launch_security::LaunchSecurityConfig;
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_launch_security(
     state: State<'_, AppState>,
     name: String,
@@ -14,7 +14,7 @@ pub fn get_launch_security(
     state.libvirt().get_launch_security(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_launch_security(
     state: State<'_, AppState>,
     name: String,

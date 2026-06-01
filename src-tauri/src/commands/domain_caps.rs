@@ -6,7 +6,7 @@ use crate::models::error::VirtManagerError;
 /// Return host domain capabilities, optionally constrained to a specific
 /// (emulator, arch, machine, virttype). Passing `None` for any field lets
 /// libvirt pick sensible defaults.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_domain_capabilities(
     state: State<'_, AppState>,
     emulator: Option<String>,

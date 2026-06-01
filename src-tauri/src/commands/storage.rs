@@ -54,17 +54,17 @@ fn default_true() -> bool { true }
 
 // ── Pool commands ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_storage_pools(state: State<'_, AppState>) -> Result<Vec<StoragePoolInfo>, VirtManagerError> {
     state.libvirt().list_storage_pools()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pool_xml(state: State<'_, AppState>, name: String) -> Result<String, VirtManagerError> {
     state.libvirt().get_pool_xml(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pool_config(
     state: State<'_, AppState>,
     name: String,
@@ -72,22 +72,22 @@ pub fn get_pool_config(
     state.libvirt().get_pool_config(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().start_pool(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().stop_pool(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn refresh_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     state.libvirt().refresh_pool(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtManagerError> {
     // Guard: refuse if the pool still has volumes. libvirt rejects this
     // with an opaque error; we wrap it with a clearer one.
@@ -106,7 +106,7 @@ pub fn delete_pool(state: State<'_, AppState>, name: String) -> Result<(), VirtM
     state.libvirt().delete_pool(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_pool_autostart(
     state: State<'_, AppState>,
     name: String,
@@ -115,7 +115,7 @@ pub fn set_pool_autostart(
     state.libvirt().set_pool_autostart(&name, autostart)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_pool(
     state: State<'_, AppState>,
     req: CreatePoolRequest,
@@ -144,7 +144,7 @@ pub fn create_pool(
 
 // ── Volume commands ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_volumes(
     state: State<'_, AppState>,
     pool_name: String,
@@ -152,7 +152,7 @@ pub fn list_volumes(
     state.libvirt().list_volumes(&pool_name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_volume(
     state: State<'_, AppState>,
     req: CreateVolumeRequest,
@@ -189,14 +189,14 @@ pub struct DefineSecretRequest {
     pub value: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_secrets(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::libvirt::secrets::SecretInfo>, VirtManagerError> {
     state.libvirt().list_secrets()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn define_secret(
     state: State<'_, AppState>,
     req: DefineSecretRequest,
@@ -226,7 +226,7 @@ pub fn define_secret(
     Ok(uuid)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_secret_value(
     state: State<'_, AppState>,
     uuid: String,
@@ -235,7 +235,7 @@ pub fn set_secret_value(
     state.libvirt().set_secret_value(&uuid, value.as_bytes())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_secret(
     state: State<'_, AppState>,
     uuid: String,
@@ -243,7 +243,7 @@ pub fn delete_secret(
     state.libvirt().delete_secret(&uuid)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_volume(state: State<'_, AppState>, path: String) -> Result<(), VirtManagerError> {
     // Guard: refuse if any domain currently references this volume path.
     let domains = state.libvirt().list_all_domains()?;
@@ -276,7 +276,7 @@ pub fn delete_volume(state: State<'_, AppState>, path: String) -> Result<(), Vir
     state.libvirt().delete_volume(&path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resize_volume(
     state: State<'_, AppState>,
     path: String,
@@ -297,7 +297,7 @@ pub struct VolumeUploadProgress {
 /// is identified by (pool_name, vol_name) — call create_volume first.
 /// Progress events fire on the `volume_upload_progress` Tauri channel
 /// throttled to ~5/sec so the webview doesn't drown.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upload_volume(
     state: State<'_, AppState>,
     app: AppHandle,

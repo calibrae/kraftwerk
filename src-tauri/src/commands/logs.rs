@@ -10,7 +10,7 @@ use crate::models::error::VirtManagerError;
 /// the UI tail incrementally — pass back the largest ts_ms from the
 /// previous batch. `min_level` filters by minimum severity ("error" |
 /// "warn" | "info" | "debug" | "trace"); `None` = no filter.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_logs(
     state: State<'_, AppState>,
     after_ts_ms: Option<u64>,
@@ -31,7 +31,7 @@ pub fn get_logs(
 }
 
 /// Drop every entry currently in the buffer.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_logs(state: State<'_, AppState>) -> Result<(), VirtManagerError> {
     if let Some(buf) = state.log_buffer() {
         buf.clear();
@@ -42,7 +42,7 @@ pub fn clear_logs(state: State<'_, AppState>) -> Result<(), VirtManagerError> {
 /// Change the active log level at runtime. Accepts "off" | "error" |
 /// "warn" | "info" | "debug" | "trace". The UI "verbose" toggle maps
 /// to "debug" on / "info" off.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_log_level(level: String) -> Result<(), VirtManagerError> {
     let f = level_filter_from_str(&level).ok_or_else(|| VirtManagerError::OperationFailed {
         operation: "setLogLevel".into(),
@@ -54,7 +54,7 @@ pub fn set_log_level(level: String) -> Result<(), VirtManagerError> {
 }
 
 /// Read the currently-active level filter as a lowercase string.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_log_level() -> String {
     log::max_level().to_string().to_lowercase()
 }

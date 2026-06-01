@@ -3,7 +3,7 @@ use crate::app_state::AppState;
 use crate::libvirt::disk_config::DiskConfig;
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_domain_disks(
     state: State<'_, AppState>,
     name: String,
@@ -11,7 +11,7 @@ pub fn list_domain_disks(
     state.libvirt().list_domain_disks(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_domain_disk(
     state: State<'_, AppState>,
     name: String,
@@ -22,7 +22,7 @@ pub fn add_domain_disk(
     state.libvirt().add_domain_disk(&name, &disk, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_domain_disk(
     state: State<'_, AppState>,
     name: String,
@@ -33,7 +33,7 @@ pub fn remove_domain_disk(
     state.libvirt().remove_domain_disk(&name, &target_dev, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_domain_disk(
     state: State<'_, AppState>,
     name: String,

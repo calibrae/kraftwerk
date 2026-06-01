@@ -9,7 +9,7 @@ use crate::models::error::VirtManagerError;
 use crate::models::vm::VmInfo;
 
 /// Mark / unmark a domain as a kraftwerk template.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_template_flag(
     state: State<'_, AppState>,
     name: String,
@@ -19,7 +19,7 @@ pub fn set_template_flag(
 }
 
 /// List domains marked as templates.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_templates(state: State<'_, AppState>) -> Result<Vec<VmInfo>, VirtManagerError> {
     state.libvirt().list_templates()
 }
@@ -27,7 +27,7 @@ pub fn list_templates(state: State<'_, AppState>) -> Result<Vec<VmInfo>, VirtMan
 /// Clone a template into a new domain. Optional cloud-init seed is
 /// generated as a NoCloud ISO on the hypervisor host and attached as
 /// a CD-ROM on the new VM.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clone_from_template(
     state: State<'_, AppState>,
     template_name: String,

@@ -6,7 +6,7 @@ use crate::app_state::AppState;
 use crate::libvirt::filesystem_config::{FilesystemConfig, ShmemConfig};
 use crate::models::error::VirtManagerError;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_filesystems(
     state: State<'_, AppState>,
     name: String,
@@ -14,7 +14,7 @@ pub fn list_filesystems(
     state.libvirt().list_filesystems(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_filesystem(
     state: State<'_, AppState>,
     name: String,
@@ -26,7 +26,7 @@ pub fn add_filesystem(
     state.libvirt().add_filesystem(&name, &fs, force_memory_backing, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_filesystem(
     state: State<'_, AppState>,
     name: String,
@@ -37,7 +37,7 @@ pub fn remove_filesystem(
     state.libvirt().remove_filesystem(&name, &target_dir, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_filesystem(
     state: State<'_, AppState>,
     name: String,
@@ -48,7 +48,7 @@ pub fn update_filesystem(
     state.libvirt().update_filesystem(&name, &fs, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_shmems(
     state: State<'_, AppState>,
     name: String,
@@ -56,7 +56,7 @@ pub fn list_shmems(
     state.libvirt().list_shmems(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_shmem(
     state: State<'_, AppState>,
     name: String,
@@ -67,7 +67,7 @@ pub fn add_shmem(
     state.libvirt().add_shmem(&name, &shmem, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_shmem(
     state: State<'_, AppState>,
     name: String,
@@ -78,7 +78,7 @@ pub fn remove_shmem(
     state.libvirt().remove_shmem(&name, &shmem_name, live, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn enable_shared_memory_backing(
     state: State<'_, AppState>,
     name: String,
