@@ -14,7 +14,7 @@
    * cannot be live-hot-plugged without shared memory backing, which
    * itself is persistent-only, so a restart is generally required.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
 
   let { vmName } = $props();
 

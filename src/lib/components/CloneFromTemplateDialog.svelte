@@ -5,7 +5,7 @@
    * optional cloud-init NoCloud seed ISO that's generated on the
    * hypervisor host and attached as a CD-ROM on the new VM.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { refreshVms } from "$lib/stores/app.svelte.js";
 
   let { open = $bindable(false), source = null } = $props();

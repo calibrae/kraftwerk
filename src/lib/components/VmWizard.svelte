@@ -13,7 +13,7 @@
    * No mid-wizard "customize before install" detour — edit the VM in the
    * regular config tabs once it exists.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState, refreshVms, clearError } from "$lib/stores/app.svelte.js";
 
   let { open = $bindable(false) } = $props();

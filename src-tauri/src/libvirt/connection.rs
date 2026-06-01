@@ -2822,11 +2822,24 @@ impl LibvirtConnection {
     where
         F: FnOnce(&Connect) -> Result<T, VirtManagerError>,
     {
-        let guard = self.inner.lock().unwrap();
-        match guard.as_ref() {
-            Some(conn) => f(conn),
-            None => Err(VirtManagerError::NotConnected),
-        }
+        // Briefly take the lock just to clone the underlying Connect
+        // (virConnectRef bumps the ref count atomically — cheap and
+        // thread-safe), then drop the lock BEFORE running the closure.
+        // libvirt RPCs over qemu+ssh can block for the full TCP timeout
+        // (~75s on macOS) when the network is sketchy; holding our own
+        // Mutex for that duration serializes every other command
+        // through it and freezes the whole UI. Releasing here lets
+        // independent operations proceed in parallel — they still
+        // share the underlying socket so libvirt-internal serialization
+        // still applies, but our mutex is no longer the bottleneck.
+        let conn = {
+            let guard = self.inner.lock().unwrap();
+            match guard.as_ref() {
+                Some(c) => c.clone(),
+                None => return Err(VirtManagerError::NotConnected),
+            }
+        };
+        f(&conn)
     }
 
     fn lookup_domain(conn: &Connect, name: &str) -> Result<Domain, VirtManagerError> {

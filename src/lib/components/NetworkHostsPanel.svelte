@@ -1,5 +1,5 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { onMount } from "svelte";
 
   let { networkName } = $props();

@@ -7,7 +7,7 @@
    * immediately to a running VM when QEMU supports it; falling back to
    * persistent-only when the user explicitly picks that in the picker.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { vmName } = $props();

@@ -5,7 +5,7 @@
    * Sections: Serial / Console / Channel / Parallel.
    * Quick actions for the two common channels (qemu-ga, vdagent).
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
 
   let { vmName } = $props();
 

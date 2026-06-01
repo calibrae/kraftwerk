@@ -1,5 +1,5 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { refreshVms } from "$lib/stores/app.svelte.js";
 
   let { open = $bindable(false), source = null } = $props();

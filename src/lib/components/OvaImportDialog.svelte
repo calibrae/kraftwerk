@@ -9,7 +9,7 @@
    * yet, so the operator pastes an absolute path. Drag-drop could be
    * a later polish step.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState, refreshVms, refreshPools } from "$lib/stores/app.svelte.js";
 
   let { open = $bindable(false) } = $props();

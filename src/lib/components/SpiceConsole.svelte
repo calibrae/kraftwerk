@@ -15,7 +15,7 @@
    * Browser-enforced ESC also releases but we don't advertise it.
    */
   import { onMount, onDestroy, tick } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { listen } from "@tauri-apps/api/event";
 
   let { vmName, onClose } = $props();

@@ -8,7 +8,7 @@
    * restart for the new config to take effect — we surface a
    * warning when the VM is running.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { vmName } = $props();

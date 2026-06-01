@@ -1,5 +1,5 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
 
   let { open = $bindable(false), info = null, onAccept = () => {}, onCancel = () => {} } = $props();
 

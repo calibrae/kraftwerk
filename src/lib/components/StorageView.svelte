@@ -1,6 +1,6 @@
 <script>
   import { getState, refreshPools, refreshVolumes, startPool, stopPool, deletePool, refreshPoolVolumes, setPoolAutostart, deleteVolume } from "$lib/stores/app.svelte.js";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
 
   let catalog = $state([]);
   let catalogLoading = $state(false);

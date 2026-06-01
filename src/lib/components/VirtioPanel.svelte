@@ -11,7 +11,7 @@
    *  - Vsock        — live + persistent
    *  - IOMMU        — persistent
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { vmName } = $props();

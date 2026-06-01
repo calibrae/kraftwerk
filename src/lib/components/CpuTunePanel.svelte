@@ -6,7 +6,7 @@
    * virt-manager. Everything is persistent (next boot); vCPU count and
    * iothread count have dedicated live-apply buttons where supported.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { vmName } = $props();

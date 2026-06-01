@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import RFB from "$lib/vendor/novnc/core/rfb.js";
 
   let { vmName, onClose } = $props();

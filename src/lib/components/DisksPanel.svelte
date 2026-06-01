@@ -12,7 +12,7 @@
    * for instance) only apply to config — the backend silently falls back
    * when live hotplug is refused. We display the error if any.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import BackingChainPanel from "./BackingChainPanel.svelte";
 
   let { vmName } = $props();

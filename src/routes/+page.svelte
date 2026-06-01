@@ -11,7 +11,7 @@
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import VmWizard from "$lib/components/VmWizard.svelte";
   import OvaImportDialog from "$lib/components/OvaImportDialog.svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../lib/invoke.js";
   import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
 
   const appState = getState();

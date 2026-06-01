@@ -5,7 +5,7 @@
    * All changes are persistent (next boot). We show a "restart required"
    * hint when any field differs from the saved value.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { vmName } = $props();

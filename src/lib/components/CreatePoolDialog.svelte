@@ -3,7 +3,7 @@
 
   let { open = $bindable(false) } = $props();
 
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   const TYPES = [
     { id: "dir",     label: "Directory",    desc: "Local filesystem folder (simplest, most common)" },
     { id: "netfs",   label: "NFS Mount",    desc: "Mount a remote NFS export" },

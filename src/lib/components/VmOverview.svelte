@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import Sparkline from "./Sparkline.svelte";
 
   let { vmName, running } = $props();

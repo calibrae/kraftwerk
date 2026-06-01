@@ -7,7 +7,7 @@
    *
    * Persistent-only — most controller model changes require restart.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
 
   let { vmName } = $props();
 

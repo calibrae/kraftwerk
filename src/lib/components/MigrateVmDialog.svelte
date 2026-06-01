@@ -5,7 +5,7 @@
    * off virDomainMigrate, and polls progress until completion or
    * cancellation.
    */
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../invoke.js";
   import { getState } from "$lib/stores/app.svelte.js";
 
   let { open = $bindable(false), vmName, sourceConnectionId } = $props();
