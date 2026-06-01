@@ -59,23 +59,39 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db
-      - name: ensure dylibbundler
-        run: command -v dylibbundler >/dev/null 2>&1 || brew install dylibbundler
+      - name: ensure dylibbundler + create-dmg
+        run: |
+          command -v dylibbundler >/dev/null 2>&1 || brew install dylibbundler
+          command -v create-dmg     >/dev/null 2>&1 || brew install create-dmg
       - name: tauri build (sign + notarize)
         run: npm run tauri build
       - name: bundle libvirt + transitive dylibs into .app
         run: ./scripts/bundle_macos_dylibs.sh src-tauri/target/release/bundle/macos/Kraftwerk.app
-      - name: rebuild DMG with the self-contained .app
+      - name: rebuild DMG with installer-style layout
         # tauri build's DMG was built before we vendored libvirt into the
-        # bundle, so it contains the pre-fix binary. Discard it and make a
-        # fresh one from the now-self-contained .app.
+        # bundle, so it contains the pre-fix binary. Discard it and make
+        # a fresh one — using create-dmg this time so the result opens
+        # in a single Finder window with a large Kraftwerk.app icon and
+        # an "Applications" drop-link beside it.
         run: |
           set -eu
           APP=src-tauri/target/release/bundle/macos/Kraftwerk.app
           VERSION=$(node -p "require('./package.json').version")
           OUT="src-tauri/target/release/bundle/dmg/Kraftwerk_${VERSION}_aarch64.dmg"
           rm -f "$OUT"
-          hdiutil create -volname Kraftwerk -srcfolder "$APP" -ov -format UDZO "$OUT"
+          mkdir -p src-tauri/target/release/bundle/dmg
+          create-dmg \
+            --volname "Kraftwerk" \
+            --window-pos 200 120 \
+            --window-size 600 380 \
+            --icon-size 128 \
+            --icon "Kraftwerk.app" 160 180 \
+            --app-drop-link 440 180 \
+            --hide-extension "Kraftwerk.app" \
+            --no-internet-enable \
+            --hdiutil-quiet \
+            "$OUT" \
+            "$APP"
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$OUT"
       - name: install playwright (for tier 3 bundle smoke)
         run: |
