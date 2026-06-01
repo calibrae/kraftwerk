@@ -1,6 +1,6 @@
 {
   "name": "kraftwerk",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Cross-platform libvirt VM manager (Rust + Tauri + Svelte)",
   "type": "module",
   "scripts": {
