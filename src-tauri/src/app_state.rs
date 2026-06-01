@@ -46,6 +46,9 @@ pub struct AppState {
     persistence_path: Option<PathBuf>,
     /// Drained once by `start_event_loop` after Tauri setup.
     event_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<crate::libvirt::events::DomainEvent>>>,
+    /// Shared handle to the in-process log ring buffer. Tauri commands
+    /// in commands/logs.rs read / clear / inspect it.
+    log_buffer: Mutex<Option<crate::log_buffer::LogBuffer>>,
 }
 
 impl AppState {
@@ -68,7 +71,22 @@ impl AppState {
                 .expect("tokio runtime"),
             persistence_path: None,
             event_rx: Mutex::new(None),
+            log_buffer: Mutex::new(None),
         }
+    }
+
+    /// Wire the log ring buffer in after the global logger has been
+    /// installed. Called once from `run()` so Tauri commands can read
+    /// the buffer through the State<AppState> they already hold.
+    pub fn set_log_buffer(&self, buf: crate::log_buffer::LogBuffer) {
+        *self.log_buffer.lock().unwrap() = Some(buf);
+    }
+
+    /// Return a clone of the LogBuffer handle (Arc-shared). `None`
+    /// when the logger wasn't installed yet — should only happen in
+    /// unit-test contexts that build an AppState directly.
+    pub fn log_buffer(&self) -> Option<crate::log_buffer::LogBuffer> {
+        self.log_buffer.lock().unwrap().clone()
     }
 
     /// Initialise libvirts default event loop and the per-process channel

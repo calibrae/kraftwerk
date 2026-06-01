@@ -1,6 +1,7 @@
 pub mod app_state;
 mod commands;
 pub mod libvirt;
+pub mod log_buffer;
 pub mod models;
 
 use app_state::AppState;
@@ -30,19 +31,27 @@ use commands::migration as cmd_migration;
 use commands::templates as cmd_templates;
 use commands::image_catalog as cmd_images;
 use commands::ovf_import as cmd_ovf;
+use commands::logs as cmd_logs;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    // Install our buffered logger (also forwards to stderr). The
+    // returned LogBuffer handle goes into AppState so Tauri commands
+    // can read / clear it from the UI.
+    let log_buffer = log_buffer::default_init();
 
     let config_path = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("kraftwerk")
         .join("connections.json");
 
+    let app_state = AppState::with_persistence(config_path);
+    app_state.set_log_buffer(log_buffer);
+    log::info!("kraftwerk {} starting", env!("CARGO_PKG_VERSION"));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::with_persistence(config_path))
+        .manage(app_state)
         .setup(|app| {
             use tauri::Manager; use tauri::Emitter;
             let state: tauri::State<'_, AppState> = app.state();
@@ -231,6 +240,10 @@ pub fn run() {
             cmd_images::download_image,
             cmd_ovf::inspect_ova,
             cmd_ovf::import_ova,
+            cmd_logs::get_logs,
+            cmd_logs::clear_logs,
+            cmd_logs::set_log_level,
+            cmd_logs::get_log_level,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

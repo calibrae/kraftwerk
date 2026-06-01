@@ -11,6 +11,7 @@
   import CreateVolumeDialog from "$lib/components/CreateVolumeDialog.svelte";
   import VmWizard from "$lib/components/VmWizard.svelte";
   import OvaImportDialog from "$lib/components/OvaImportDialog.svelte";
+  import LogsDialog from "$lib/components/LogsDialog.svelte";
   import { invoke } from "../lib/invoke.js";
   import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
 
@@ -65,6 +66,7 @@
   let showVolumeDialog = $state(false);
   let showVmWizard = $state(false);
   let showOvaImport = $state(false);
+  let showLogs = $state(false);
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
@@ -96,6 +98,7 @@
         <button class="view-tab" class:active={view === "storage"} onclick={() => view = "storage"}>
           Storage <span class="count">{appState.pools.length}</span>
         </button>
+        <button class="view-tab help-btn" onclick={() => showLogs = true} title="Application logs (verbose toggle inside)">? Help</button>
       </div>
     {/if}
 
@@ -121,6 +124,7 @@
 <CreateVolumeDialog bind:open={showVolumeDialog} poolName={volumePoolName} />
 <VmWizard bind:open={showVmWizard} />
 <OvaImportDialog bind:open={showOvaImport} />
+<LogsDialog bind:open={showLogs} />
 
 {#if appState.error}
   <div class="toast-error">
@@ -212,6 +216,13 @@
     margin-left: auto;
     color: var(--accent);
     font-weight: 500;
+  }
+
+  .view-tab.help-btn {
+    color: var(--text-muted);
+  }
+  .view-tab.help-btn:hover {
+    color: var(--text);
   }
   .view-tab.new-btn:hover { color: var(--text); background: var(--accent-dim); border-radius: 6px; margin-bottom: 2px; border-bottom-color: transparent; }
 
