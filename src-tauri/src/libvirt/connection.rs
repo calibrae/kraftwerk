@@ -91,6 +91,18 @@ impl LibvirtConnection {
         })?;
         log::info!("open: libvirt connected in {}ms", t_lv.elapsed().as_millis());
 
+        // Enable libvirt-level keepalive on the RPC socket. Without this the
+        // TCP connection silently dies under idle NAT/firewall states and
+        // SSH server `ClientAlive` timeouts; the next RPC then fails with
+        // "client socket is closed". Probe every 30s, declare dead after
+        // 3 missed (so ~120s detection). Best-effort — some transports
+        // (qemu:///session, test://) reject keepalive, so we only warn.
+        if let Err(e) = conn.set_keep_alive(30, 3) {
+            log::info!("open: set_keep_alive not supported on this transport: {e}");
+        } else {
+            log::info!("open: keepalive enabled (30s × 3)");
+        }
+
         // Register the lifecycle event callback before we install the new
         // Connect into the guard, so we can roll back on registration error.
         if let Err(e) = crate::libvirt::events::register(conn.as_ptr()) {
@@ -119,6 +131,21 @@ impl LibvirtConnection {
     pub fn is_connected(&self) -> bool {
         let guard = self.inner.lock().unwrap();
         guard.is_some()
+    }
+
+    /// Probe whether the underlying RPC socket is still alive.
+    ///
+    /// Returns `false` when no Connect is held, when libvirt itself reports
+    /// the connection dead, or when `virConnectIsAlive` returns an error
+    /// (which in practice means the socket is gone). Used by the connection
+    /// pool to detect stale entries — e.g. after the laptop sleeps or the
+    /// SSH session is torn down by an idle-timeout firewall.
+    pub fn is_alive(&self) -> bool {
+        let guard = self.inner.lock().unwrap();
+        match guard.as_ref() {
+            Some(c) => c.is_alive().unwrap_or(false),
+            None => false,
+        }
     }
 
     /// Get the hypervisor hostname.

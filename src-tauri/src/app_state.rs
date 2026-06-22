@@ -181,6 +181,18 @@ impl AppState {
     /// a prerequisite for live migration (need both source and target
     /// open simultaneously).
     pub fn open_connection(&self, id: Uuid, uri: &str) -> Result<Arc<LibvirtConnection>, VirtManagerError> {
+        // Probe the pooled entry's socket before handing it back. After the
+        // laptop sleeps or a NAT/SSH idle-timeout fires, the libvirt RPC
+        // socket dies but our Arc<LibvirtConnection> still points at the
+        // stale virConnectPtr — the next call would surface as
+        // "client socket is closed". Drop dead entries and re-open.
+        let existing = self.connections.lock().unwrap().get(&id).cloned();
+        if let Some(ref c) = existing {
+            if !c.is_alive() {
+                log::info!("open_connection: pooled entry for {id} is dead, reconnecting");
+                self.close_connection_internal(&id);
+            }
+        }
         let existing = self.connections.lock().unwrap().get(&id).cloned();
         let conn = match existing {
             Some(c) => c,
