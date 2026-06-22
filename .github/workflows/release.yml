@@ -8,6 +8,14 @@ on:
 permissions:
   contents: write     # create releases + upload assets
 
+# Tauri's bundler refuses to produce updater artifacts when the public
+# key is present in tauri.conf.json but the matching private key isn't
+# in the environment. Set the signing env globally so every platform's
+# `tauri build` can sign its .tar.gz / .zip update artifact.
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
 jobs:
   build-linux:
     name: linux bundle
@@ -48,11 +56,6 @@ jobs:
       APPLE_API_KEY_PATH: /Users/cali/.privatekeys/AuthKey_Z43Q26MB7Y.p8
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_TEAM_ID: XJQQCN392F
-      # Tauri auto-updater minisign keypair. Without these the build still
-      # produces a bundle, but tauri-plugin-updater won't trust the
-      # resulting .app.tar.gz at install time.
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
