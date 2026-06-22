@@ -12,6 +12,7 @@
   import VmWizard from "$lib/components/VmWizard.svelte";
   import OvaImportDialog from "$lib/components/OvaImportDialog.svelte";
   import LogsDialog from "$lib/components/LogsDialog.svelte";
+  import UpdateDialog from "$lib/components/UpdateDialog.svelte";
   import { invoke } from "../lib/invoke.js";
   import { listen } from "@tauri-apps/api/event";
   import { loadConnections, addConnection, connect, getState, clearError, startAutoPolls, subscribeDomainEvents, parseSshHost } from "$lib/stores/app.svelte.js";
@@ -68,6 +69,8 @@
   let showVmWizard = $state(false);
   let showOvaImport = $state(false);
   let showLogs = $state(false);
+  let showUpdate = $state(false);
+  let updateSilent = $state(false);
   let volumePoolName = $state("");
   let view = $state("vms"); // "vms" | "networks" | "storage"
 
@@ -80,7 +83,18 @@
     // the same dialog the sidebar's ≡ button opens.
     try {
       menuUnlisten = await listen("menu:show-logs", () => { showLogs = true; });
+      await listen("menu:check-for-updates", () => {
+        updateSilent = false;
+        showUpdate = true;
+      });
     } catch (_) { /* not running under Tauri (e.g. plain vite dev) */ }
+
+    // Silent update check on launch — opens the dialog only if an
+    // update is available, otherwise closes itself without UI.
+    try {
+      updateSilent = true;
+      showUpdate = true;
+    } catch (_) { /* plain browser dev */ }
   });
   // Plain-browser dev (vite alone) won't have @tauri-apps/api/event,
   // so swallow the import error silently — the in-window button still
@@ -135,6 +149,7 @@
 <VmWizard bind:open={showVmWizard} />
 <OvaImportDialog bind:open={showOvaImport} />
 <LogsDialog bind:open={showLogs} />
+<UpdateDialog bind:open={showUpdate} bind:silent={updateSilent} />
 
 {#if appState.error}
   <div class="toast-error">

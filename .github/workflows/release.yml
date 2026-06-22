@@ -48,6 +48,11 @@ jobs:
       APPLE_API_KEY_PATH: /Users/cali/.privatekeys/AuthKey_Z43Q26MB7Y.p8
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_TEAM_ID: XJQQCN392F
+      # Tauri auto-updater minisign keypair. Without these the build still
+      # produces a bundle, but tauri-plugin-updater won't trust the
+      # resulting .app.tar.gz at install time.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,6 +82,21 @@ jobs:
         run: npm run tauri build
       - name: bundle libvirt + transitive dylibs into .app
         run: ./scripts/bundle_macos_dylibs.sh src-tauri/target/release/bundle/macos/Kraftwerk.app
+      - name: re-tar + re-sign .app for the updater
+        # tauri build produced an .app.tar.gz BEFORE dylib bundling — it
+        # would install a broken app on update. Repack the post-bundle
+        # .app and re-sign the tarball with the minisign key so
+        # tauri-plugin-updater accepts it.
+        run: |
+          set -eu
+          APP=src-tauri/target/release/bundle/macos/Kraftwerk.app
+          OUT="src-tauri/target/release/bundle/macos/Kraftwerk.app.tar.gz"
+          rm -f "$OUT" "$OUT.sig"
+          tar -C "$(dirname "$APP")" -czf "$OUT" "$(basename "$APP")"
+          npx --yes @tauri-apps/cli signer sign \
+            --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+            --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+            "$OUT"
       - name: rebuild DMG with installer-style layout
         # tauri build's DMG was built before we vendored libvirt into the
         # bundle, so it contains the pre-fix binary. Discard it and build
@@ -112,12 +132,39 @@ jobs:
             --issuer "$APPLE_API_ISSUER" \
             --wait
           xcrun stapler staple "$DMG"
+      - name: write updater manifest (latest.json)
+        # latest.json is what tauri-plugin-updater fetches to discover a
+        # new version. We hard-code the GitHub release asset URL using
+        # the current tag, which softprops/action-gh-release publishes
+        # the .app.tar.gz under in the release step below.
+        run: |
+          set -eu
+          export VERSION=$(node -p "require('./package.json').version")
+          export ASSET=Kraftwerk.app.tar.gz
+          export SIG=$(cat "src-tauri/target/release/bundle/macos/${ASSET}.sig")
+          export URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${ASSET}"
+          export PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          export NOTES=$(git log -1 --pretty=%s)
+          mkdir -p src-tauri/target/release/updater
+          node -e '
+            const fs = require("fs");
+            const { VERSION, NOTES, PUB_DATE, SIG, URL } = process.env;
+            fs.writeFileSync("src-tauri/target/release/updater/latest.json", JSON.stringify({
+              version: VERSION,
+              notes: NOTES,
+              pub_date: PUB_DATE,
+              platforms: { "darwin-aarch64": { signature: SIG, url: URL } }
+            }, null, 2));
+          '
+          cat src-tauri/target/release/updater/latest.json
       - uses: actions/upload-artifact@v4
         with:
           name: kraftwerk-macos-aarch64
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/release/updater/latest.json
 
   build-windows:
     name: windows bundle (experimental)

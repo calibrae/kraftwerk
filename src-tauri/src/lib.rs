@@ -51,6 +51,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .setup(|app| {
             use tauri::Manager; use tauri::Emitter;
@@ -73,12 +75,16 @@ pub fn run() {
             let show_logs = MenuItemBuilder::with_id("show-logs", "Application Logs…")
                 .accelerator("CmdOrCtrl+L")
                 .build(app)?;
+            let check_updates = MenuItemBuilder::with_id("check-updates", "Check for Updates…")
+                .build(app)?;
             let help_menu = SubmenuBuilder::new(app, "Help")
                 .item(&show_logs)
                 .build()?;
             // App menu (first submenu on macOS — shows the app name).
             let app_menu = SubmenuBuilder::new(app, "Kraftwerk")
                 .about(None)
+                .separator()
+                .item(&check_updates)
                 .separator()
                 .hide()
                 .hide_others()
@@ -100,8 +106,10 @@ pub fn run() {
             // Bridge menu clicks to the webview via an event the
             // frontend listens for.
             app.on_menu_event(|app_handle, event| {
-                if event.id() == "show-logs" {
-                    let _ = app_handle.emit("menu:show-logs", ());
+                match event.id().as_ref() {
+                    "show-logs" => { let _ = app_handle.emit("menu:show-logs", ()); }
+                    "check-updates" => { let _ = app_handle.emit("menu:check-for-updates", ()); }
+                    _ => {}
                 }
             });
             Ok(())

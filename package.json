@@ -1,6 +1,6 @@
 {
   "name": "kraftwerk",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Cross-platform libvirt VM manager (Rust + Tauri + Svelte)",
   "type": "module",
   "scripts": {
@@ -18,6 +18,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "crytter-wasm": "file:./vendor/crytter-wasm",
     "vite-plugin-wasm": "^3.6.0"
   },
